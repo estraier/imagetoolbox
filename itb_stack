@@ -25,8 +25,10 @@
 import argparse
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import time
 
 import cv2
 import numpy as np
@@ -44,6 +46,11 @@ cmd_env = os.environ.copy()
 cmd_env["PATH"] = cmd_env["PATH"] + ":/usr/local/bin"
 cmd_env["PATH"] = cmd_env["PATH"] + ":/Applications/Hugin/tools_mac"
 cv2.setLogLevel(0)
+
+
+def has_command(name):
+  """Check existence of a command."""
+  return bool(shutil.which(name))
 
 
 def load_image(file_path):
@@ -209,9 +216,13 @@ def main():
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
             help="sigmoidal contrast adjustment. positive to strengthen, negative to weaken")
   args = ap.parse_args()
+  start_time = time.time()
+  logger.info(f"Process started: input={args.images}, output={args.output}")
+  logger.info(f"Loading the input files")
   images_data = [load_image(img) for img in args.images]
   images, bits_list = zip(*images_data)
   if args.adjust_exposure:
+    logger.info(f"Adjusting input exposure")
     images = adjust_exposure(images)
   merged_image = merge_images(images)
   if args.slog > 0:
@@ -222,9 +233,13 @@ def main():
     merged_image = sigmoidal_contrast(merged_image, args.sigmoid, 0.5)
   elif args.sigmoid < 0:
     merged_image = inverse_sigmoidal_contrast(merged_image, -args.sigmoid, 0.5)
+  logger.info(f"Saving the output file")
   save_image(args.output, merged_image, bits_list[0])
-  copy_metadata(args.images[0], args.output)
-  print(f"Saved merged image as {args.output}")
+  if has_command(CMD_EXIFTOOL):
+    logger.info(f"Copying metadata")
+    copy_metadata(args.images[0], args.output)
+  elapsed_time = time.time() - start_time
+  logger.info(f"Process done: time={elapsed_time:.2f}s")
 
 
 if __name__ == "__main__":
