@@ -12,30 +12,40 @@ Required libraries are the following.
 
   OpenCV2, NumPy
 
+To install them, run the following command.
+
+  $ pip3 pip3 install opencv-python-headless numpy
+
 Optionally, those tools can be executed implicitly.
 
   ExifTool
 
---------
+----------------
 
 itb_stack : Stack and merge images into one.
 
-  This is useful to make pseudo-STF images and HDR images.
-  For pseudo-STF, take multiple images with various apertures.  If you can use
-  aperture bracketing, just input the images.  They are stacked and merged into
-  a image by average composition.
+This is useful to make pseudo-STF images and HDR images.
+For pseudo-STF (smooth transfer focus), take multiple images with various
+apertures.  If you can use aperture bracketing or do it manually, just input
+the images.  They are stacked and merged into a image by average composition.
 
   $ itb_stack input*.jpg -o output.jpg
 
-  Most cameras support exposure bracketting.  If you use it on the S mode with
-  a fixed ISO, images are taken with various apertures but exposure is different.
-  Then, set -ax option, which adjusts exposure of each input image before merging.
+Most cameras support exposure bracketting.  If you use it on the S mode with a
+fixed ISO, images are taken with various apertures but exposure is different.
+Then, set -ax option, which adjusts exposure of each input image before merging.
   
   $ itb_stack input*.jpg -o output.jpg -ax
 
-  You can adjust brightness and contrast of the merged image manually.
+To make a HDR (high dynamic range) image from images taken by exposure
+bracketting, run the following command.  It merges input images by Debevec
+method and apply tone mapping by Reinhard method.
 
-  $ itb_stack input*.jpg -o output.jpg --slog 1.5 --sigmoid 0.8
+  $ itb_stack input*.jpg -o output.jpg -m d -r
+
+You can adjust brightness and contrast of the merged image manually.
+
+  $ itb_stack input*.jpg -o output.jpg --slog 1.3 --sigmoid 2.4
 
 
 == END OF FILE ==

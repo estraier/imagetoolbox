@@ -76,7 +76,7 @@ def load_image(file_path):
 
 
 def save_image(file_path, np_img, bits, icc_profile=None, exif_data=None):
-  """Saves an image after converting it from linear RGB to sRGB while preserving metadata."""
+  """Saves an image after converting it from linear RGB to sRGB."""
   np_img = linear_to_srgb(np_img)
   ext = file_path.split('.')[-1].lower()
   if ext in ['jpg', 'jpeg']:
@@ -99,18 +99,21 @@ def copy_metadata(source_path, target_path):
   """Copies EXIF data and ICC profile from source image to target image."""
   cmd = ["exiftool", "-TagsFromFile", source_path, "-icc_profile",
          "-thumbnailimage=", "-f", "-m", "-overwrite_original", target_path]
-  subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+  subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL)
 
 
 def srgb_to_linear(image):
   """Converts sRGB to linear RGB using OpenCV (optimized for float32)."""
-  mod_image = np.where(image <= 0.04045, image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
+  mod_image = np.where(image <= 0.04045,
+                       image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
   return mod_image
 
 
 def linear_to_srgb(image):
   """Converts linear RGB to sRGB using OpenCV (optimized for float32)."""
-  mod_image = np.where(image <= 0.0031308, image * 12.92, 1.055 * cv2.pow(image, 1/2.4) - 0.055)
+  mod_image = np.where(image <= 0.0031308,
+                       image * 12.92, 1.055 * cv2.pow(image, 1/2.4) - 0.055)
   return mod_image
 
 
@@ -155,7 +158,8 @@ def inverse_sigmoidal_contrast(image, gain, mid):
   min_val = naive_inverse_sigmoid(0.0, gain, mid)
   max_val = naive_inverse_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
-  return np.clip((naive_inverse_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
+  return np.clip((naive_inverse_sigmoid(
+    image, gain, mid) - min_val) / diff, 0, 1)
 
 
 def adjust_exposure(image, target_brightness):
@@ -165,10 +169,12 @@ def adjust_exposure(image, target_brightness):
   brightness = compute_brightness(image)
   while num_tries < 10:
     num_tries += 1
-    if brightness == 0 or target_brightness == 0 or brightness == target_brightness:
+    if (brightness == 0 or target_brightness == 0 or
+        brightness == target_brightness):
       break
     dist = abs(np.log(target_brightness / brightness))
-    logger.debug(f"tries={num_tries}, dist={dist:.3f}, brightness={brightness:.3f}")
+    logger.debug(f"tries={num_tries}, dist={dist:.3f},"
+                 f" brightness={brightness:.3f}")
     if dist < 0.1:
       break
     if brightness <= target_brightness:
@@ -188,14 +194,71 @@ def adjust_exposure(image, target_brightness):
   return image
 
 
-def merge_images(images):
-  """Merges images by averaging pixel values."""
+def merge_images_average(images):
+  """Merges images by average composition."""
   return np.mean(images, axis=0)
 
 
+def merge_images_debevec(images):
+  """Merges images by Debevec HDR method."""
+  brightness_values = np.array([compute_brightness(image) for image in images])
+  exposures = brightness_values / max(np.min(brightness_values), 0.001)
+  byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
+                 for image in images]
+  merger = cv2.createMergeDebevec()
+  hdr = merger.process(byte_images, times=exposures)
+  return hdr
+
+
+def merge_images_robertson(images):
+  """Merges images by Robertson HDR method."""
+  brightness_values = np.array([compute_brightness(image) for image in images])
+  exposures = brightness_values / max(np.min(brightness_values), 0.001)
+  byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
+                 for image in images]
+  merger = cv2.createMergeRobertson()
+  hdr = merger.process(byte_images, times=exposures)
+  return hdr
+
+
+def merge_images_mertens(images):
+  """Merges images by Mertens HDR method."""
+  byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
+                 for image in images]
+  merger = cv2.createMergeMertens()
+  hdr = merger.process(byte_images)
+  return hdr
+
+
+def tone_map_image_linear(image):
+  """Applies tone mapping by linear normalization."""
+  return cv2.normalize(image, None, 0, 1, cv2.NORM_MINMAX).astype(np.float32)
+
+
+def tone_map_image_reinhard(image):
+  """Applies tone mapping by Reinhard method."""
+  tonemap = cv2.createTonemapReinhard(gamma=1.0, intensity=0, light_adapt=0.5,
+                                      color_adapt=0.5)
+  ldr = np.clip(tonemap.process(image), 0, 1)
+  return ldr
+
+
+def tone_map_image_drago(image):
+  """Applies tone mapping by Drago method."""
+  tonemap = cv2.createTonemapDrago(gamma=1.0, saturation=1.0, bias=0.9)
+  ldr = np.clip(tonemap.process(image), 0, 1)
+  return ldr
+
+
+def tone_map_image_mantiuk(image):
+  """Applies tone mapping by Mantiuk method."""
+  tonemap = cv2.createTonemapMantiuk(gamma=1.0, scale=0.9, saturation=1.0)
+  ldr = np.clip(tonemap.process(image), 0, 1)
+  return ldr
+
+
 def main():
-  description = """Stack and combine images.
-"""
+  description = "Stack and combine images."
   epilog = f"{PROG_NAME} version {PROG_VERSION}. Powered by OpenCV2."
   ap = argparse.ArgumentParser(
     prog=PROG_NAME, description=description, epilog=epilog,
@@ -203,17 +266,29 @@ def main():
   ap.add_argument("images", nargs='+', help="input image paths")
   ap.add_argument("--output", "-o", default="output.tif", metavar="path",
                   help="output image path (dafault=output.tif)")
-  ap.add_argument("--adjust-exposure", "-ax", action='store_true', help="adjust exposure automatically")
+  ap.add_argument("--average-input-exposure", "-ai", action='store_true',
+                  help="average input exposure")
+  ap.add_argument("--merge-method", "-m", default="average", metavar="name",
+                  help="Choose a processing method:"
+                  " average (default), debevec, robertson, mertens")
+  ap.add_argument("--tone-method", "-t", default="linear", metavar="name",
+                  help="Choose a tone mapping method dor debevec:"
+                  " linear (default), reinhard, drago, mantiuk")
+  ap.add_argument("--no-restore", "-nr", action='store_true',
+                  help="do not apply auto restoration of brightness")
   ap.add_argument("--slog", type=float, default=0, metavar="num",
-            help="scaled log brightness adjustment. positive to lighten, negative to darken")
+            help="scaled log brightness adjustment."
+            " positive to lighten, negative to darken")
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
-            help="sigmoidal contrast adjustment. positive to strengthen, negative to weaken")
+            help="sigmoidal contrast adjustment."
+            " positive to strengthen, negative to weaken")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   args = ap.parse_args()
   start_time = time.time()
   if args.debug:
     logger.setLevel(logging.DEBUG)
-  logger.debug(f"{PROG_NAME}={PROG_VERSION}, OpenCV={cv2.__version__}, NumPy={np.__version__}")
+  logger.debug(f"{PROG_NAME}={PROG_VERSION},"
+               " OpenCV={cv2.__version__}, NumPy={np.__version__}")
   logger.info(f"Process started: input={args.images}, output={args.output}")
   logger.info(f"Loading the input files")
   images_data = [load_image(img) for img in args.images]
@@ -221,10 +296,43 @@ def main():
   brightness_values = np.array([compute_brightness(image) for image in images])
   mean_brightness = np.mean(brightness_values)
   logger.debug(f"mean_brightness={mean_brightness:.3f}")
-  if args.adjust_exposure:
+  if args.average_input_exposure:
     logger.info(f"Adjusting input exposure to the mean")
     images = [adjust_exposure(image, mean_brightness) for image in images]
-  merged_image = merge_images(images)
+  is_hdr = False
+  if args.merge_method in ["average", "a"]:
+    logger.info(f"Merging images by average composition")
+    merged_image = merge_images_average(images)
+  elif args.merge_method in ["debevec", "d"]:
+    logger.info(f"Merging images by Debevec method as an HDRI")
+    merged_image = merge_images_debevec(images)
+    is_hdr = True
+  elif args.merge_method in ["robertson", "r"]:
+    logger.info(f"Merging images by Robertson method")
+    merged_image = merge_images_robertson(images)
+  elif args.merge_method in ["mertens", "m"]:
+    logger.info(f"Merging images by Mertens method")
+    merged_image = merge_images_mertens(images)
+  else:
+    raise ValueError(f"Unknown merge method")
+  if is_hdr:
+    if args.tone_method in ["linear", "l"]:
+      logger.info(f"Tone mapping images by linear reduction")
+      merged_image = tone_map_image_linear(merged_image)
+    elif args.tone_method in ["reinhard", "r"]:
+      logger.info(f"Tone mapping images by Reinhard method")
+      merged_image = tone_map_image_reinhard(merged_image)
+    elif args.tone_method in ["drago", "d"]:
+      logger.info(f"Tone mapping images by Drago method")
+      merged_image = tone_map_image_drago(merged_image)
+    elif args.tone_method in ["mantiuk", "m"]:
+      logger.info(f"Tone mapping images by Mantiuk method")
+      merged_image = tone_map_image_mantiuk(merged_image)
+    else:
+      raise ValueError(f"Unknown tone method")
+  if not args.no_restore:
+    logger.info(f"Applying auto restoration of brightness")
+    merged_image = adjust_exposure(merged_image, mean_brightness)
   if args.slog > 0:
     merged_image = lighten_image(merged_image, args.slog)
   elif args.slog < 0:
