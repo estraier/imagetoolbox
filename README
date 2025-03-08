@@ -35,17 +35,45 @@ Most cameras support exposure bracketting.  If you use it on the S mode with a
 fixed ISO, images are taken with various apertures but exposure is different.
 Then, set -ax option, which adjusts exposure of each input image before merging.
   
-  $ itb_stack input*.jpg -o output.jpg -ax
+  $ itb_stack input*.jpg -o output.jpg -a
+
+If you bracketting is done hand-held without a tripod.  Pictures will be shifted
+a litte, which causes blur after merging.  In that case, aligning input images
+is useful.
+
+  $ itb_stack input*.jpg -o output.jpg -a --align
 
 To make a HDR (high dynamic range) image from images taken by exposure
 bracketting, run the following command.  It merges input images by Debevec
 method and apply tone mapping by Reinhard method.
 
-  $ itb_stack input*.jpg -o output.jpg -m d -r
+  $ itb_stack input*.jpg -o output.jpg -m d -t r
+
+Aligning images is useful to make HDR images of hand-held taken pictures.
+
+  $ itb_stack input*.jpg -o output.jpg -m d -t r --align
+
+Brightness of the merged image is calibrated to match it with the average
+brightness of the input images.  You can suppress it.
+
+  $ itb_stack input*.jpg -o output.jpg -nr
 
 You can adjust brightness and contrast of the merged image manually.
 
   $ itb_stack input*.jpg -o output.jpg --slog 1.3 --sigmoid 2.4
+
+You can put caption on the merged image.  By default, the font size is 20% of
+sqrt(area); the font color is white; the position is center.
+
+  $ itb_stack input*.jpg -o output.jpg --caption "hello"
+
+You can change the size, color, and position.  The following set the size 0.5,
+the color #ff0, and the position bottom-left.
+
+  $ itb_stack input*.jpg -o output.jpg --caption "hello|0.5|ff0|bl"
+
+If "exiftool" command is available on your system, EXIF metadata and ICC
+profile of the first input image is conveyed to the merged image.
 
 
 == END OF FILE ==

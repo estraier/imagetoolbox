@@ -73,7 +73,7 @@ def load_image(file_path):
     image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
   elif image.shape[2] == 4:
     image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-  h, w, _ = image.shape
+  h, w = image.shape[:2]
   logger.debug(f"h={h}, w={w}, area={h*w}, bits={bits}")
   image = srgb_to_linear(image)
   return image, bits
@@ -109,16 +109,16 @@ def copy_metadata(source_path, target_path):
 
 def srgb_to_linear(image):
   """Converts sRGB to linear RGB using OpenCV (optimized for float32)."""
-  mod_image = np.where(image <= 0.04045,
-                       image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
-  return mod_image
+  image = np.where(image <= 0.04045,
+                   image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
+  return image.astype(np.float32)
 
 
 def linear_to_srgb(image):
   """Converts linear RGB to sRGB using OpenCV (optimized for float32)."""
-  mod_image = np.where(image <= 0.0031308,
-                       image * 12.92, 1.055 * cv2.pow(image, 1/2.4) - 0.055)
-  return mod_image
+  image = np.where(image <= 0.0031308,
+                   image * 12.92, 1.055 * cv2.pow(image, 1/2.4) - 0.055)
+  return image.astype(np.float32)
 
 
 def compute_brightness(image):
@@ -128,17 +128,20 @@ def compute_brightness(image):
 
 def lighten_image(image, factor):
   """Lightens the image by applying a scaled log transformation."""
-  return np.log1p(image * factor) / np.log1p(factor)
+  image = np.log1p(image * factor) / np.log1p(factor)
+  return image.astype(np.float32)
 
 
 def darken_image(image, factor):
   """Darkens the image by applying an inverse log transformation."""
-  return (np.expm1(image * np.log1p(factor))) / factor
+  image = (np.expm1(image * np.log1p(factor))) / factor
+  return image.astype(np.float32)
 
 
 def naive_sigmoid(x, gain, mid):
   """Computes naive sigmod conversion."""
-  return 1.0 / (1.0 + np.exp((mid - x) * gain))
+  image = 1.0 / (1.0 + np.exp((mid - x) * gain))
+  return image.astype(np.float32)
 
 
 def naive_inverse_sigmoid(x, gain, mid):
@@ -154,7 +157,8 @@ def sigmoidal_contrast(image, gain, mid):
   min_val = naive_sigmoid(0.0, gain, mid)
   max_val = naive_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
-  return np.clip((naive_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
+  return np.clip((naive_sigmoid(image, gain, mid) - min_val) / diff,
+                 0, 1).astype(np.float32)
 
 
 def inverse_sigmoidal_contrast(image, gain, mid):
@@ -163,7 +167,7 @@ def inverse_sigmoidal_contrast(image, gain, mid):
   max_val = naive_inverse_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
   return np.clip((naive_inverse_sigmoid(
-    image, gain, mid) - min_val) / diff, 0, 1)
+    image, gain, mid) - min_val) / diff, 0, 1).astype(np.float32)
 
 
 def adjust_exposure(image, target_brightness):
@@ -196,6 +200,124 @@ def adjust_exposure(image, target_brightness):
       brightness = adjusted_brightness
     leverage *= 0.5
   return image
+
+
+def align_images(images):
+  if len(images) < 2:
+    return images
+  ref_image = images[0]
+  h, w = ref_image.shape[:2]
+  orb = cv2.ORB_create()
+  ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
+  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
+  ref_kp, ref_des = orb.detectAndCompute(ref_gray, None)
+  if ref_des is None:
+    logger.debug(f"reference has no des")
+    return images
+  aligned_images = [ref_image]
+  for image in images[1:]:
+    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
+    kp, des = orb.detectAndCompute(image_gray, None)
+    if ref_des is None:
+      logger.debug(f"image has no des")
+      aligned_images.append(image)
+      continue
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = bf.match(ref_des, des)
+    matches = sorted(matches, key=lambda x: x.distance)
+    if len(matches) > 10:
+      logger.debug(f"matches={len(matches)}")
+      src_pts = np.float32([ref_kp[m.queryIdx].pt
+                            for m in matches]).reshape(-1, 1, 2)
+      dst_pts = np.float32([kp[m.trainIdx].pt
+                            for m in matches]).reshape(-1, 1, 2)
+      m, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
+      if m is not None:
+        logger.debug(f"got homography, warping")
+        aligned_image = cv2.warpPerspective(image, m, (w, h))
+        aligned_images.append(aligned_image)
+      else:
+        logger.debug(f"no homography")
+        aligned_images.append(image)
+    else:
+      logger.debug(f"no match")
+      aligned_images.append(image)
+  return aligned_images
+
+
+def align_images(images):
+  if len(images) < 2:
+    return images
+  ref_image = images[0]
+  h, w = ref_image.shape[:2]
+  orb = cv2.ORB_create(nfeatures=5000)
+  ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
+  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
+  ref_kp, ref_des = orb.detectAndCompute(ref_gray, None)
+  if ref_des is None:
+    logger.debug(f"reference image has no descriptors")
+    return images
+  aligned_images = [ref_image]
+  bounding_boxes = []
+  for image in images[1:]:
+    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
+    kp, des = orb.detectAndCompute(image_gray, None)
+    if des is None:
+      logger.debug(f"image has no descriptors")
+      aligned_images.append(image)
+      continue
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = bf.match(ref_des, des)
+    matches = sorted(matches, key=lambda x: x.distance)
+    if len(matches) > 10:
+      logger.debug(f"matches={len(matches)}")
+      src_pts = np.float32([ref_kp[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+      dst_pts = np.float32([kp[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+      m, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
+      if m is not None:
+        logger.debug(f"warping: m={m}, w={w}, h={h}")
+        aligned_image = cv2.warpPerspective(image, m, (w, h))
+        aligned_images.append(aligned_image)
+        corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
+        transformed_corners = cv2.perspectiveTransform(corners, m)
+        x_min, y_min = np.min(transformed_corners, axis=0).flatten()
+        x_max, y_max = np.max(transformed_corners, axis=0).flatten()
+        bounding_boxes.append((int(x_min), int(y_min), int(x_max), int(y_max)))
+      else:
+        logger.debug(f"no homography")
+        aligned_images.append(image)
+    else:
+      logger.debug(f"no matches")
+      aligned_images.append(image)
+  if bounding_boxes:
+    x_min = max(b[0] for b in bounding_boxes)
+    y_min = max(b[1] for b in bounding_boxes)
+    x_max = min(b[2] for b in bounding_boxes)
+    y_max = min(b[3] for b in bounding_boxes)
+    if x_min != 0 or y_min != 0 or x_max != w or y_max != h:
+      crop_w = x_max - x_min
+      crop_h = y_max - y_min
+      aspect_ratio = w / h
+      cropped_aspect_ratio = crop_w / crop_h
+      if cropped_aspect_ratio > aspect_ratio * 1.001:
+        new_crop_w = int(crop_h * aspect_ratio)
+        x_min = x_min + (crop_w - new_crop_w) // 2
+        x_max = x_min + new_crop_w
+      elif cropped_aspect_ratio < aspect_ratio * 0.999:
+        new_crop_h = int(crop_w / aspect_ratio)
+        y_min = y_min + (crop_h - new_crop_h) // 2
+        y_max = y_min + new_crop_h
+      logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
+      cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
+    else:
+      logger.debug(f"no need to crop")
+      cropped_images = aligned_images
+  else:
+    logger.debug(f"no need to crop")
+    cropped_images = aligned_images
+  return cropped_images
 
 
 def merge_images_average(images):
@@ -263,20 +385,20 @@ def tone_map_image_mantiuk(image):
 
 def write_caption(capexpr, image):
   """Write a text on an image."""
+  h, w = image.shape[:2]
   fields = capexpr.split("|")
   text = fields[0]
   font = cv2.FONT_HERSHEY_SIMPLEX
-  font_ratio = 5
+  font_ratio = 1.0
   if len(fields) > 1:
-    match = re.fullmatch(r" *(\d+) *", fields[1])
+    match = re.fullmatch(r" *(\d+\.\d*) *", fields[1])
     if match:
-      font_ratio = max(1, min(int(match.group(1)), 100)) / 100
-  h, w, _ = image.shape
-  font_scale = ((h * w) ** 0.5) * font_ratio * 0.04
+      font_ratio = float(match.group(1))
+  font_scale = 0.01 * np.sqrt(h * w) / 5 * font_ratio
   thickness = max(1, int(font_scale))
   r, g, b = (255, 255, 255)
   if len(fields) > 2:
-    match = re.fullmatch(r" *([0-9a-fA-F]{3,6}) *", fields[2])
+    match = re.fullmatch(r" *#?([0-9a-fA-F]{3,6}) *", fields[2])
     if match:
       expr = match.group(1)
       if len(expr) == 3:
@@ -301,7 +423,8 @@ def write_caption(capexpr, image):
         tx = w // 50
       if "r" in expr:
         tx = w - tw - w // 40
-  logger.debug(f"text={text}, scale={font_scale:.3}, r={r:.2f}, g={g:.2f}, b={b:.2f},"
+  logger.debug(f"text={text}, scale={font_scale:.2f},"
+               f" r={r:.2f}, g={g:.2f}, b={b:.2f},"
                f" x={tx}, y={ty}, w={tw}, h={th}")
   cv2.putText(image, text, (tx, ty), font, font_scale, font_color, thickness, line_type)
   return image
@@ -318,6 +441,8 @@ def main():
                   help="output image path (dafault=output.tif)")
   ap.add_argument("--average-input-exposure", "-ai", action='store_true',
                   help="average input exposure")
+  ap.add_argument("--align", "-a", action='store_true',
+                  help="Align images before merging")
   ap.add_argument("--merge-method", "-m", default="average", metavar="name",
                   help="Choose a processing method:"
                   " average (default), debevec, robertson, mertens")
@@ -332,8 +457,9 @@ def main():
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
             help="sigmoidal contrast adjustment."
             " positive to strengthen, negative to weaken")
-  ap.add_argument("--caption", "-c", default="", metavar="text",
-                  help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
+  ap.add_argument("--caption", default="", metavar="text",
+                  help="put a caption text: TEXT|SIZE|COLOR|POS"
+                  " eg. Hello|5|ddeeff|tl")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   args = ap.parse_args()
   start_time = time.time()
@@ -351,6 +477,9 @@ def main():
   if args.average_input_exposure:
     logger.info(f"Adjusting input exposure to the mean")
     images = [adjust_exposure(image, mean_brightness) for image in images]
+  if args.align:
+    logger.info(f"Aligning images")
+    images = align_images(images)
   is_hdr = False
   if args.merge_method in ["average", "a"]:
     logger.info(f"Merging images by average composition")
