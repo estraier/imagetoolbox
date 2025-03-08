@@ -25,6 +25,7 @@
 import argparse
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -55,42 +56,45 @@ def has_command(name):
 
 def load_image(file_path):
   """Loads an image and return its linear RGB data as a NumPy array."""
-  np_img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-  if np_img is None:
+  logger.debug(f"loading {file_path}")
+  image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+  if image is None:
     raise ValueError(f"Failed to load {file_path}")
-  if np_img.dtype == np.uint32:
-    np_img = np_img.astype(np.float32) / float((1<<32) - 1)
+  if image.dtype == np.uint32:
+    image = image.astype(np.float32) / float((1<<32) - 1)
     bits = 32
-  elif np_img.dtype == np.uint16:
-    np_img = np_img.astype(np.float32) / float((1<<16) - 1)
+  elif image.dtype == np.uint16:
+    image = image.astype(np.float32) / float((1<<16) - 1)
     bits = 16
   else:
-    np_img = np_img.astype(np.float32) / float((1<<8) - 1)
+    image = image.astype(np.float32) / float((1<<8) - 1)
     bits = 8
-  if len(np_img.shape) == 2:
-    np_img = cv2.cvtColor(np_img, cv2.COLOR_GRAY2BGR)
-  elif np_img.shape[2] == 4:
-    np_img = cv2.cvtColor(np_img, cv2.COLOR_BGRA2BGR)
-  np_img = srgb_to_linear(np_img)
-  return np_img, bits
+  if len(image.shape) == 2:
+    image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+  elif image.shape[2] == 4:
+    image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+  h, w, _ = image.shape
+  logger.debug(f"h={h}, w={w}, area={h*w}, bits={bits}")
+  image = srgb_to_linear(image)
+  return image, bits
 
 
-def save_image(file_path, np_img, bits, icc_profile=None, exif_data=None):
+def save_image(file_path, image, bits, icc_profile=None, exif_data=None):
   """Saves an image after converting it from linear RGB to sRGB."""
-  np_img = linear_to_srgb(np_img)
+  image = linear_to_srgb(image)
   ext = file_path.split('.')[-1].lower()
   if ext in ['jpg', 'jpeg']:
-    np_img = (np.clip(np_img, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
+    image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
   elif ext in ['png', 'tiff', 'tif']:
     if bits == 32:
-      np_img = (np.clip(np_img, 0, 1) * ((1<<32) - 1)).astype(np.uint32)
+      image = (np.clip(image, 0, 1) * ((1<<32) - 1)).astype(np.uint32)
     elif bits == 16:
-      np_img = (np.clip(np_img, 0, 1) * ((1<<16) - 1)).astype(np.uint16)
+      image = (np.clip(image, 0, 1) * ((1<<16) - 1)).astype(np.uint16)
     else:
-      np_img = (np.clip(np_img, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
+      image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
   else:
     raise ValueError(f"Unsupported file format: {ext}")
-  success = cv2.imwrite(file_path, np_img)
+  success = cv2.imwrite(file_path, image)
   if not success:
     raise ValueError(f"Failed to save image: {file_path}")
 
@@ -257,6 +261,52 @@ def tone_map_image_mantiuk(image):
   return ldr
 
 
+def write_caption(capexpr, image):
+  """Write a text on an image."""
+  fields = capexpr.split("|")
+  text = fields[0]
+  font = cv2.FONT_HERSHEY_SIMPLEX
+  font_ratio = 5
+  if len(fields) > 1:
+    match = re.fullmatch(r" *(\d+) *", fields[1])
+    if match:
+      font_ratio = max(1, min(int(match.group(1)), 100)) / 100
+  h, w, _ = image.shape
+  font_scale = ((h * w) ** 0.5) * font_ratio * 0.04
+  thickness = max(1, int(font_scale))
+  r, g, b = (255, 255, 255)
+  if len(fields) > 2:
+    match = re.fullmatch(r" *([0-9a-fA-F]{3,6}) *", fields[2])
+    if match:
+      expr = match.group(1)
+      if len(expr) == 3:
+        (r, g, b) = (int(expr[0] * 2, 16), int(expr[1] * 2, 16), int(expr[2] * 2, 16))
+      elif len(expr) == 6:
+        (r, g, b) = (int(expr[0:2], 16), int(expr[2:4], 16), int(expr[4:6], 16))
+  r, g, b = float(r) / 255, float(g) / 255, float(b) / 255
+  font_color = (b, g, r)
+  line_type = cv2.LINE_AA
+  tw, th = cv2.getTextSize(text, font, font_scale, thickness)[0]
+  tx = (w - tw) // 2
+  ty = (h + th) // 2
+  if len(fields) > 3:
+    match = re.fullmatch(r" *([a-xA-X]+) *", fields[3])
+    if match:
+      expr = match.group(1).lower()
+      if "t" in expr:
+        ty = th + h // 40
+      elif "b" in expr:
+        ty = h - h // 40
+      if "l" in expr:
+        tx = w // 50
+      if "r" in expr:
+        tx = w - tw - w // 40
+  logger.debug(f"text={text}, scale={font_scale:.3}, r={r:.2f}, g={g:.2f}, b={b:.2f},"
+               f" x={tx}, y={ty}, w={tw}, h={th}")
+  cv2.putText(image, text, (tx, ty), font, font_scale, font_color, thickness, line_type)
+  return image
+
+
 def main():
   description = "Stack and combine images."
   epilog = f"{PROG_NAME} version {PROG_VERSION}. Powered by OpenCV2."
@@ -282,6 +332,8 @@ def main():
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
             help="sigmoidal contrast adjustment."
             " positive to strengthen, negative to weaken")
+  ap.add_argument("--caption", "-c", default="", metavar="text",
+                  help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   args = ap.parse_args()
   start_time = time.time()
@@ -341,6 +393,9 @@ def main():
     merged_image = sigmoidal_contrast(merged_image, args.sigmoid, 0.5)
   elif args.sigmoid < 0:
     merged_image = inverse_sigmoidal_contrast(merged_image, -args.sigmoid, 0.5)
+  if len(args.caption) > 0:
+    logger.info(f"Writing the caption")
+    merged_image = write_caption(args.caption, merged_image)
   logger.info(f"Saving the output file")
   save_image(args.output, merged_image, bits_list[0])
   if has_command(CMD_EXIFTOOL):
