@@ -406,6 +406,18 @@ def merge_images_mertens(images):
   return hdr
 
 
+def stitch_images(images):
+  """Stitches images as a panorama photo."""
+  byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
+                 for image in images]
+  stitcher = cv2.Stitcher_create()
+  status, stitched_image = stitcher.stitch(byte_images)
+  if status != cv2.Stitcher_OK:
+    raise ValueError(f"Stitching failed")
+  stitched_image = np.clip(stitched_image.astype(np.float32) / 255, 0, 1)
+  return stitched_image
+
+
 def tone_map_image_linear(image):
   """Applies tone mapping by linear normalization."""
   return cv2.normalize(image, None, 0, 1, cv2.NORM_MINMAX).astype(np.float32)
@@ -499,8 +511,8 @@ def main():
   ap.add_argument("--align-hugin", action='store_true',
                   help="Use Hugin to align input images before merging")
   ap.add_argument("--merge-method", "-mm", default="average", metavar="name",
-                  help="Choose a processing method:"
-                  " average (default), debevec, robertson, mertens")
+                  help="Choose a processing method for merging:"
+                  " average (default), debevec, robertson, mertens, stitch")
   ap.add_argument("--tone-method", "-tm", default="linear", metavar="name",
                   help="Choose a tone mapping method dor debevec:"
                   " linear (default), reinhard, drago, mantiuk")
@@ -553,6 +565,9 @@ def main():
   elif args.merge_method in ["mertens", "m"]:
     logger.info(f"Merging images by Mertens method")
     merged_image = merge_images_mertens(images)
+  elif args.merge_method in ["stitch", "s"]:
+    logger.info(f"Stitching images as a panorama photo")
+    merged_image = stitch_images(images)
   else:
     raise ValueError(f"Unknown merge method")
   if is_hdr:

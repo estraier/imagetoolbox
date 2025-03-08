@@ -62,6 +62,10 @@ You can adjust brightness and contrast of the merged image manually.
 
   $ itb_stack input*.jpg -o output.jpg --slog 1.3 --sigmoid 2.4
 
+Stitching images as a panorama image is also supported.
+
+  $ itb_stack input*.jpg -o output.jpg --mm s
+
 You can put caption on the merged image.  By default, the font size is 20% of
 sqrt(area); the font color is white; the position is center.
 
