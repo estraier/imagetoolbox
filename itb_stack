@@ -29,6 +29,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 import cv2
@@ -38,12 +39,14 @@ import numpy as np
 PROG_NAME = "itb_combine"
 PROG_VERSION = "0.0.1"
 CMD_EXIFTOOL = "exiftool"
+CMD_HUGIN_ALIGN = "align_image_stack"
 
 
 logging.basicConfig(format="%(message)s", stream=sys.stderr)
 logger = logging.getLogger(PROG_NAME)
 logger.setLevel(logging.INFO)
-cmd_env = os.environ.copy()
+cmd_env = os.environ
+cmd_env["PATH"] = cmd_env["PATH"] + ":/opt/homebrew/bin"
 cmd_env["PATH"] = cmd_env["PATH"] + ":/usr/local/bin"
 cmd_env["PATH"] = cmd_env["PATH"] + ":/Applications/Hugin/tools_mac"
 cv2.setLogLevel(0)
@@ -79,13 +82,14 @@ def load_image(file_path):
   return image, bits
 
 
-def save_image(file_path, image, bits, icc_profile=None, exif_data=None):
+def save_image(file_path, image, bits):
   """Saves an image after converting it from linear RGB to sRGB."""
+  logger.debug(f"saving {file_path}")
   image = linear_to_srgb(image)
-  ext = file_path.split('.')[-1].lower()
-  if ext in ['jpg', 'jpeg']:
+  ext = os.path.splitext(file_path)[1].lower()
+  if ext in ['.jpg', '.jpeg']:
     image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
-  elif ext in ['png', 'tiff', 'tif']:
+  elif ext in ['.png', '.tiff', '.tif']:
     if bits == 32:
       image = (np.clip(image, 0, 1) * ((1<<32) - 1)).astype(np.uint32)
     elif bits == 16:
@@ -103,6 +107,7 @@ def copy_metadata(source_path, target_path):
   """Copies EXIF data and ICC profile from source image to target image."""
   cmd = ["exiftool", "-TagsFromFile", source_path, "-icc_profile",
          "-thumbnailimage=", "-f", "-m", "-overwrite_original", target_path]
+  logger.debug(f"running: {' '.join(cmd)}")
   subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
                  stderr=subprocess.DEVNULL)
 
@@ -203,50 +208,7 @@ def adjust_exposure(image, target_brightness):
 
 
 def align_images(images):
-  if len(images) < 2:
-    return images
-  ref_image = images[0]
-  h, w = ref_image.shape[:2]
-  orb = cv2.ORB_create()
-  ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
-  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
-  ref_kp, ref_des = orb.detectAndCompute(ref_gray, None)
-  if ref_des is None:
-    logger.debug(f"reference has no des")
-    return images
-  aligned_images = [ref_image]
-  for image in images[1:]:
-    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
-    kp, des = orb.detectAndCompute(image_gray, None)
-    if ref_des is None:
-      logger.debug(f"image has no des")
-      aligned_images.append(image)
-      continue
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = bf.match(ref_des, des)
-    matches = sorted(matches, key=lambda x: x.distance)
-    if len(matches) > 10:
-      logger.debug(f"matches={len(matches)}")
-      src_pts = np.float32([ref_kp[m.queryIdx].pt
-                            for m in matches]).reshape(-1, 1, 2)
-      dst_pts = np.float32([kp[m.trainIdx].pt
-                            for m in matches]).reshape(-1, 1, 2)
-      m, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
-      if m is not None:
-        logger.debug(f"got homography, warping")
-        aligned_image = cv2.warpPerspective(image, m, (w, h))
-        aligned_images.append(aligned_image)
-      else:
-        logger.debug(f"no homography")
-        aligned_images.append(image)
-    else:
-      logger.debug(f"no match")
-      aligned_images.append(image)
-  return aligned_images
-
-
-def align_images(images):
+  """Aligns images using OpenCV."""
   if len(images) < 2:
     return images
   ref_image = images[0]
@@ -318,6 +280,37 @@ def align_images(images):
     logger.debug(f"no need to crop")
     cropped_images = aligned_images
   return cropped_images
+
+
+def align_images_hugin(images, input_paths, bits_list):
+  """Aligns images using Hugin."""
+  if len(images) < 2:
+    return images
+  temp_dir = tempfile.gettempdir()
+  pid = os.getpid()
+  tmp_paths = []
+  prefix = f"itb_stack-{pid:08d}"
+  full_prefix = os.path.join(temp_dir, prefix)
+  cmd = [CMD_HUGIN_ALIGN, "-C", "-c", "64", "-a", f"{full_prefix}-output-"]
+  align_input_paths = []
+  for image, input_path, bits in zip(images, input_paths, bits_list):
+    ext = os.path.splitext(input_path)[1].lower()
+    align_input_path = f"{full_prefix}-input-{len(align_input_paths)+1:04d}{ext}"
+    align_input_paths.append(align_input_path)
+    save_image(align_input_path, image, bits)
+    cmd.append(align_input_path)
+  logger.debug(f"running: {' '.join(cmd)}")
+  subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+  for align_input_path in align_input_paths:
+    os.remove(align_input_path)
+  aligned_images = []
+  for name in os.listdir(temp_dir):
+    if not name.startswith(prefix): continue
+    align_output_path = os.path.join(temp_dir, name)
+    image, bits = load_image(align_output_path)
+    aligned_images.append(image)
+    os.remove(align_output_path)
+  return aligned_images
 
 
 def merge_images_average(images):
@@ -431,6 +424,7 @@ def write_caption(capexpr, image):
 
 
 def main():
+  """Execute all operations."""
   description = "Stack and combine images."
   epilog = f"{PROG_NAME} version {PROG_VERSION}. Powered by OpenCV2."
   ap = argparse.ArgumentParser(
@@ -439,14 +433,16 @@ def main():
   ap.add_argument("images", nargs='+', help="input image paths")
   ap.add_argument("--output", "-o", default="output.tif", metavar="path",
                   help="output image path (dafault=output.tif)")
-  ap.add_argument("--average-input-exposure", "-ai", action='store_true',
+  ap.add_argument("--average-input-exposure", "-ax", action='store_true',
                   help="average input exposure")
-  ap.add_argument("--align", "-a", action='store_true',
-                  help="Align images before merging")
-  ap.add_argument("--merge-method", "-m", default="average", metavar="name",
+  ap.add_argument("--align", action='store_true',
+                  help="Align input images before merging")
+  ap.add_argument("--align-hugin", action='store_true',
+                  help="Use Hugin to align input images before merging")
+  ap.add_argument("--merge-method", "-mm", default="average", metavar="name",
                   help="Choose a processing method:"
                   " average (default), debevec, robertson, mertens")
-  ap.add_argument("--tone-method", "-t", default="linear", metavar="name",
+  ap.add_argument("--tone-method", "-tm", default="linear", metavar="name",
                   help="Choose a tone mapping method dor debevec:"
                   " linear (default), reinhard, drago, mantiuk")
   ap.add_argument("--no-restore", "-nr", action='store_true',
@@ -469,7 +465,7 @@ def main():
                " OpenCV={cv2.__version__}, NumPy={np.__version__}")
   logger.info(f"Process started: input={args.images}, output={args.output}")
   logger.info(f"Loading the input files")
-  images_data = [load_image(img) for img in args.images]
+  images_data = [load_image(input_path) for input_path in args.images]
   images, bits_list = zip(*images_data)
   brightness_values = np.array([compute_brightness(image) for image in images])
   mean_brightness = np.mean(brightness_values)
@@ -477,7 +473,10 @@ def main():
   if args.average_input_exposure:
     logger.info(f"Adjusting input exposure to the mean")
     images = [adjust_exposure(image, mean_brightness) for image in images]
-  if args.align:
+  if args.align_hugin and has_command(CMD_HUGIN_ALIGN):
+    logger.info(f"Aligning images by {CMD_HUGIN_ALIGN}")
+    images = align_images_hugin(images, args.images, bits_list)
+  elif args.align:
     logger.info(f"Aligning images")
     images = align_images(images)
   is_hdr = False
