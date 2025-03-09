@@ -1,6 +1,6 @@
 #! /usr/bin/python3
 # -*- coding: utf-8 -*-
-
+##################################################################################################
 # Copyright (c) 2025 Mikio Hirabayashi
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -20,6 +20,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+##################################################################################################
 
 
 import argparse
@@ -125,24 +126,26 @@ def get_metadata(path):
       tags = exifread.process_file(f)
       for name, value in tags.items():
         if name == "EXIF ExposureTime":
-          meta["_et_"] = parse_numeric(str(value))
+          meta["_tv_"] = parse_numeric(str(value))
         if name == "EXIF FNumber":
-          meta["_fn_"] = parse_numeric(str(value))
+          meta["_fv_"] = parse_numeric(str(value))
         if name == "EXIF ISOSpeedRatings":
-          meta["_iso_"] = parse_numeric(str(value))
+          meta["_sv_"] = parse_numeric(str(value))
   except:
     pass
   return meta
 
 
-def get_luminance(meta):
+def get_light_value(meta):
   """Gets the luminance value from metadata."""
-  et = meta.get("_et_")
-  fn = meta.get("_fn_")
-  iso = meta.get("_iso_") or 100.0
-  if et and fn:
-    return et / fn / fn * math.log2(iso/100)
-  return 0
+  tv = meta.get("_tv_")
+  fv = meta.get("_fv_")
+  sv = meta.get("_sv_") or 100.0
+  if tv and fv:
+    ev = math.log2(1 / tv / fv / fv)
+    lv = ev + math.log2(sv / 100)
+    return lv
+  return None
 
 
 def copy_metadata(source_path, target_path):
@@ -366,30 +369,30 @@ def merge_images_average(images):
 
 def merge_images_debevec(images, meta_list):
   """Merges images by Debevec HDR method."""
-  luminances = [get_luminance(meta) for meta in meta_list]
-  min_luminance = min(luminances)
-  if min_luminance > 0:
-    exposures = np.array([luminance / min_luminance for luminance in luminances]).astype(np.float32)
-  else:
+  light_values = [get_light_value(meta) for meta in meta_list]
+  if None in light_values:
     brightness_values = np.array([compute_brightness(image) for image in images])
-    exposures = brightness_values / max(np.min(brightness_values), 0.001)
+    exposures = brightness_values / max(np.min(brightness_values), 0.0001)
+  else:
+    luminances = np.array([1 / (2 ** lv) for lv in light_values]).astype(np.float32)
+    exposures = luminances / max(np.min(luminances), 0.0001)
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
   merger = cv2.createMergeDebevec()
   hdr = merger.process(byte_images, times=exposures)
+  print(hdr.dtype)
   return hdr
 
 
 def merge_images_robertson(images, meta_list):
   """Merges images by Robertson HDR method."""
-  luminances = [get_luminance(meta) for meta in meta_list]
-  min_luminance = min(luminances)
-  if min_luminance > 0:
-    exposures = np.array([luminance / min_luminance
-                          for luminance in luminances]).astype(np.float32)
-  else:
+  light_values = [get_light_value(meta) for meta in meta_list]
+  if None in light_values:
     brightness_values = np.array([compute_brightness(image) for image in images])
-    exposures = brightness_values / max(np.min(brightness_values), 0.001)
+    exposures = brightness_values / max(np.min(brightness_values), 0.0001)
+  else:
+    luminances = np.array([1 / (2 ** lv) for lv in light_values]).astype(np.float32)
+    exposures = luminances / max(np.min(luminances), 0.0001)
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
   merger = cv2.createMergeRobertson()
@@ -445,6 +448,44 @@ def tone_map_image_mantiuk(image):
   return ldr
 
 
+def trim_image(image, top, right, bottom, left):
+  """Trims a image by percentages from sides."""
+  h, w = image.shape[:2]
+
+  # Compute pixel values for cropping
+  top_px = int(h * top)
+  right_px = int(w * right)
+  bottom_px = int(h * bottom)
+  left_px = int(w * left)
+
+  # Ensure valid cropping values
+  new_top = min(top_px, h - 1)
+  new_bottom = max(h - bottom_px, 1)
+  new_left = min(left_px, w - 1)
+  new_right = max(w - right_px, 1)
+
+  # Crop the image
+  cropped_image = image[new_top:new_bottom, new_left:new_right]
+  return cropped_image
+
+
+def get_scaled_image_size(image, long_size):
+  """Gets the new width and height if an image is scaled."""
+  h, w = image.shape[:2]  # Get current dimensions
+  if h > w:
+    scale = long_size / h
+  else:
+    scale = long_size / w
+  new_width = max(round(w * scale), 1)
+  new_height = max(round(h * scale), 1)
+  return new_width, new_height
+
+
+def scale_image(image, width, height):
+  """Scales the image into the new geometry."""
+  return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+
 def write_caption(capexpr, image):
   """Write a text on an image."""
   h, w = image.shape[:2]
@@ -494,6 +535,38 @@ def write_caption(capexpr, image):
   return image
 
 
+def parse_trim_expression(expression):
+  """Parses trimming expression and returns TLBR ratios."""
+  values = list(map(float, re.split(r'[ ,\|]+', expression.strip())))
+  if len(values) == 1:
+    t = r = b = l = values[0]
+  elif len(values) == 2:
+    t, b = values[0], values[0]
+    l, r = values[1], values[1]
+  elif len(values) == 3:
+    t, l, b = values
+    r = l
+  elif len(values) == 4:
+    t, r, b, l = values
+  else:
+    raise ValueError("trim expression must contain 1 to 4 values")
+  clip = lambda v: min(max(float(v), 0), 100) / 100
+  return clip(t), clip(l), clip(b), clip(r)
+
+
+def parse_scale_expression(expression):
+  """Parses scaling expression and returns WH pixels."""
+  values = list(map(float, re.split(r'[ ,\|]+', expression.strip())))
+  clip = lambda v: max(int(v), 1)
+  if len(values) == 1:
+    w, h = clip(values[0]), None
+  elif len(values) == 2:
+    w, h = clip(values[0]), clip(values[1])
+  else:
+    raise ValueError("scale expression must contain 1 to 2 values")
+  return w, h
+
+
 def main():
   """Execute all operations."""
   description = "Stack and combine images."
@@ -519,16 +592,24 @@ def main():
   ap.add_argument("--no-restore", "-nr", action='store_true',
                   help="do not apply auto restoration of brightness")
   ap.add_argument("--slog", type=float, default=0, metavar="num",
-            help="scaled log brightness adjustment."
-            " positive to lighten, negative to darken")
+                  help="scaled log brightness adjustment."
+                  " positive to lighten, negative to darken")
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
-            help="sigmoidal contrast adjustment."
-            " positive to strengthen, negative to weaken")
+                  help="sigmoidal contrast adjustment."
+                  " positive to strengthen, negative to weaken")
   ap.add_argument("--caption", default="", metavar="text",
                   help="put a caption text: TEXT|SIZE|COLOR|POS"
                   " eg. Hello|5|ddeeff|tl")
+  ap.add_argument("--trim", default="", metavar="numlist",
+                  help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage"
+                  " eg. 5,10,3,7")
+  ap.add_argument("--scale", default="", metavar="numlist",
+                  help="trim sides: WIDTH,HEIGHT in pixels"
+                  " eg. 1920,1080")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   args = ap.parse_args()
+  trim_params = parse_trim_expression(args.trim) if len(args.trim) > 0 else None
+  scale_params = parse_scale_expression(args.scale) if len(args.scale) > 0 else None
   start_time = time.time()
   if args.debug:
     logger.setLevel(logging.DEBUG)
@@ -589,13 +670,25 @@ def main():
     logger.info(f"Applying auto restoration of brightness")
     merged_image = adjust_exposure(merged_image, mean_brightness)
   if args.slog > 0:
+    logger.info(f"Lightening brightness")
     merged_image = lighten_image(merged_image, args.slog)
   elif args.slog < 0:
+    logger.info(f"Darkening brightness")
     merged_image = darken_image(merged_image, -args.slog)
   if args.sigmoid > 0:
+    logger.info(f"Strenghenining the contrast")
     merged_image = sigmoidal_contrast(merged_image, args.sigmoid, 0.5)
   elif args.sigmoid < 0:
+    logger.info(f"Weakening the contrast")
     merged_image = inverse_sigmoidal_contrast(merged_image, -args.sigmoid, 0.5)
+  if trim_params:
+    logger.info(f"Trimming the image")
+    merged_image = trim_image(merged_image, *trim_params)
+  if scale_params:
+    logger.info(f"Scaling the image")
+    if scale_params[1] is None:
+      scale_params = get_scaled_image_size(merged_image, scale_params[0])
+    merged_image = scale_image(merged_image, *scale_params)
   if len(args.caption) > 0:
     logger.info(f"Writing the caption")
     merged_image = write_caption(args.caption, merged_image)
