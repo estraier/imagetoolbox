@@ -90,9 +90,9 @@ def save_image(file_path, image, bits):
   logger.debug(f"saving {file_path}")
   image = linear_to_srgb(image)
   ext = os.path.splitext(file_path)[1].lower()
-  if ext in ['.jpg', '.jpeg']:
+  if ext in [".jpg", ".jpeg"]:
     image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
-  elif ext in ['.png', '.tiff', '.tif']:
+  elif ext in [".png", ".tiff", ".tif"]:
     if bits == 32:
       image = (np.clip(image, 0, 1) * ((1<<32) - 1)).astype(np.uint32)
     elif bits == 16:
@@ -122,15 +122,17 @@ def get_metadata(path):
   """Gets Exif data from a image file."""
   meta = {}
   try:
-    with open(path, "rb") as f:
-      tags = exifread.process_file(f)
-      for name, value in tags.items():
-        if name == "EXIF ExposureTime":
-          meta["_tv_"] = parse_numeric(str(value))
-        if name == "EXIF FNumber":
-          meta["_fv_"] = parse_numeric(str(value))
-        if name == "EXIF ISOSpeedRatings":
-          meta["_sv_"] = parse_numeric(str(value))
+    ext = os.path.splitext(path)[1].lower()
+    if ext in [".jpg", ".tiff", ".tif"]:
+      with open(path, "rb") as f:
+        tags = exifread.process_file(f)
+        for name, value in tags.items():
+          if name == "EXIF ExposureTime":
+            meta["_tv_"] = parse_numeric(str(value))
+          if name == "EXIF FNumber":
+            meta["_fv_"] = parse_numeric(str(value))
+          if name == "EXIF ISOSpeedRatings":
+            meta["_sv_"] = parse_numeric(str(value))
   except:
     pass
   return meta
@@ -500,6 +502,26 @@ def merge_images_average(images):
   return np.mean(images, axis=0)
 
 
+def calculate_stf_weights(f_numbers):
+  """Calculates weights for each F-numbers for STF."""
+  blur_radii = 1 / np.array(f_numbers)
+  weights = blur_radii + np.min(blur_radii) / 4
+  weights = weights / np.sum(weights)
+  return weights
+
+
+def merge_images_weighted_mean(images, meta_list):
+  """Merges images by weighted mean composition."""
+  f_numbers = [meta.get("_fv_") for meta in meta_list]
+  if None in f_numbers:
+    logger.debug(f"missing F-numbers")
+    return np.mean(images, axis=0)
+  logger.debug(f"F-numbers: {f_numbers}")
+  weights = calculate_stf_weights(f_numbers)
+  logger.debug(f"weights: {weights}")
+  return np.average(images, axis=0, weights=weights)
+
+
 def merge_images_debevec(images, meta_list):
   """Merges images by Debevec HDR method."""
   light_values = [get_light_value(meta) for meta in meta_list]
@@ -584,27 +606,21 @@ def tone_map_image_mantiuk(image):
 def trim_image(image, top, right, bottom, left):
   """Trims a image by percentages from sides."""
   h, w = image.shape[:2]
-
-  # Compute pixel values for cropping
   top_px = int(h * top)
   right_px = int(w * right)
   bottom_px = int(h * bottom)
   left_px = int(w * left)
-
-  # Ensure valid cropping values
   new_top = min(top_px, h - 1)
   new_bottom = max(h - bottom_px, 1)
   new_left = min(left_px, w - 1)
   new_right = max(w - right_px, 1)
-
-  # Crop the image
   cropped_image = image[new_top:new_bottom, new_left:new_right]
   return cropped_image
 
 
 def get_scaled_image_size(image, long_size):
   """Gets the new width and height if an image is scaled."""
-  h, w = image.shape[:2]  # Get current dimensions
+  h, w = image.shape[:2]
   if h > w:
     scale = long_size / h
   else:
@@ -717,9 +733,9 @@ def main():
                   " none (default), orb, ecc, sift, hugin")
   ap.add_argument("--merge", "-m", default="average", metavar="name",
                   help="Choose a processing method for merging:"
-                  " average (default), debevec, robertson, mertens, stitch")
+                  " average (default), weighted, debevec, robertson, mertens, stitch")
   ap.add_argument("--tonemap", "-t", default="linear", metavar="name",
-                  help="Choose a tone mapping method dor debevec:"
+                  help="Choose a tone mapping method for debevec:"
                   " linear (default), reinhard, drago, mantiuk")
   ap.add_argument("--no-restore", "-nr", action='store_true',
                   help="do not apply auto restoration of brightness")
@@ -730,14 +746,11 @@ def main():
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
   ap.add_argument("--caption", default="", metavar="text",
-                  help="put a caption text: TEXT|SIZE|COLOR|POS"
-                  " eg. Hello|5|ddeeff|tl")
+                  help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--trim", default="", metavar="numlist",
-                  help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage"
-                  " eg. 5,10,3,7")
+                  help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
   ap.add_argument("--scale", default="", metavar="numlist",
-                  help="trim sides: WIDTH,HEIGHT in pixels"
-                  " eg. 1920,1080")
+                  help="trim sides: WIDTH,HEIGHT in pixels eg. 1920,1080")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   args = ap.parse_args()
   trim_params = parse_trim_expression(args.trim) if len(args.trim) > 0 else None
@@ -778,6 +791,9 @@ def main():
   if args.merge in ["average", "a"]:
     logger.info(f"Merging images by average composition")
     merged_image = merge_images_average(images)
+  elif args.merge in ["weighted", "w"]:
+    logger.info(f"Merging images by weighted mean composition")
+    merged_image = merge_images_weighted_mean(images, meta_list)
   elif args.merge in ["debevec", "d"]:
     logger.info(f"Merging images by Debevec method as an HDRI")
     merged_image = merge_images_debevec(images, meta_list)

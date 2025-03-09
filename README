@@ -24,23 +24,30 @@ Optionally, those tools can be executed implicitly.
 
 itb_stack : Stack and merge images into one.
 
-This is useful to make pseudo-STF images and HDR images.
+This command is useful to make pseudo-STF images and HDR images.
+
 For pseudo-STF (smooth transfer focus), take multiple images with various apertures.  If you can
 use aperture bracketing or do it manually, just input the images.  They are stacked and merged
-into a image by average composition.
+into a image by weighted average composition.
 
   $ itb_stack input*.jpg -o output.jpg
+
+Actually, using weighted average composition is better for pseudo-STR.  The weight of each image
+is calculated as the radius of circle of confusion.  It means that images take with wider aperture
+contribute more to the final image.
+
+  $ itb_stack input*.jpg -o output.jpg -m w
 
 Most cameras support exposure bracketting.  If you use it on the S mode with a fixed ISO, images
 are taken with various apertures but exposure is different.  Then, set -ax option, which adjusts
 exposure of each input image before merging.
   
-  $ itb_stack input*.jpg -o output.jpg -ax
+  $ itb_stack input*.jpg -o output.jpg -ax -m w
 
 If bracketting is done hand-held without a tripod.  Pictures will be shifted a little, which
 causes blur after merging.  In that case, aligning input images is useful.
 
-  $ itb_stack input*.jpg -o output.jpg -ax -a s
+  $ itb_stack input*.jpg -o output.jpg -ax -m w -a s
 
 To make a HDR (high dynamic range) image from images taken by exposure bracketting, run the
 following command.  It merges input images by Debevec method and apply tone mapping by Reinhard
@@ -52,8 +59,8 @@ Aligning images is useful to make HDR images of hand-held taken pictures.
 
   $ itb_stack input*.jpg -o output.jpg -m d -t r -a s
 
-Brightness of the merged image is calibrated to match it with the average brightness of the input
-images.  You can suppress it.
+By default, brightness of the merged image is calibrated to match the average brightness of the
+input images.  If you calibrate brightness youself, suppress it.
 
   $ itb_stack input*.jpg -o output.jpg -nr
 
@@ -109,7 +116,7 @@ The following aligning methods are supported.
   - sift (s) : SIFT, slow but more accurate, robust to scale and rotation too
   - hugin (h) : to call Hugin's align_image_stack as an external command
 
-To make a peudo-STF image, averaging exposure and weighted average composition make the best
+To make a peudo-STF image, averaging exposure and weighted mean composition make the best
 result in most cases.
 
   $ itb_stack input*.jpg -o output.jpg -ax -m w -a s
