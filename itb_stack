@@ -510,8 +510,8 @@ def calculate_stf_weights(f_numbers):
   return weights
 
 
-def merge_images_weighted_mean(images, meta_list):
-  """Merges images by weighted mean composition."""
+def merge_images_weighted_average(images, meta_list):
+  """Merges images by weighted average composition."""
   f_numbers = [meta.get("_fv_") for meta in meta_list]
   if None in f_numbers:
     logger.debug(f"missing F-numbers")
@@ -792,8 +792,8 @@ def main():
     logger.info(f"Merging images by average composition")
     merged_image = merge_images_average(images)
   elif args.merge in ["weighted", "w"]:
-    logger.info(f"Merging images by weighted mean composition")
-    merged_image = merge_images_weighted_mean(images, meta_list)
+    logger.info(f"Merging images by weighted average composition")
+    merged_image = merge_images_weighted_average(images, meta_list)
   elif args.merge in ["debevec", "d"]:
     logger.info(f"Merging images by Debevec method as an HDRI")
     merged_image = merge_images_debevec(images, meta_list)

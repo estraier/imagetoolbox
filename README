@@ -116,8 +116,8 @@ The following aligning methods are supported.
   - sift (s) : SIFT, slow but more accurate, robust to scale and rotation too
   - hugin (h) : to call Hugin's align_image_stack as an external command
 
-To make a peudo-STF image, averaging exposure and weighted mean composition make the best
-result in most cases.
+In summary, to make a peudo-STF image, averaging exposure and weighted average composition make
+the best result in most cases.
 
   $ itb_stack input*.jpg -o output.jpg -ax -m w -a s
 
