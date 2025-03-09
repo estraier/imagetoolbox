@@ -40,17 +40,17 @@ exposure of each input image before merging.
 If bracketting is done hand-held without a tripod.  Pictures will be shifted a little, which
 causes blur after merging.  In that case, aligning input images is useful.
 
-  $ itb_stack input*.jpg -o output.jpg -ax --align
+  $ itb_stack input*.jpg -o output.jpg -ax -a s
 
 To make a HDR (high dynamic range) image from images taken by exposure bracketting, run the
 following command.  It merges input images by Debevec method and apply tone mapping by Reinhard
 method.
 
-  $ itb_stack input*.jpg -o output.jpg -mm d -tm r
+  $ itb_stack input*.jpg -o output.jpg -m d -t r
 
 Aligning images is useful to make HDR images of hand-held taken pictures.
 
-  $ itb_stack input*.jpg -o output.jpg -mm d -tm r --align
+  $ itb_stack input*.jpg -o output.jpg -m d -t r -a s
 
 Brightness of the merged image is calibrated to match it with the average brightness of the input
 images.  You can suppress it.
@@ -63,7 +63,7 @@ You can adjust brightness and contrast of the merged image manually.
 
 Stitching images as a panorama image is also supported.
 
-  $ itb_stack input*.jpg -o output.jpg --mm s
+  $ itb_stack input*.jpg -o output.jpg --m s
 
 Yo can trim and scale the merged image.  For trimming, you set percentages for each edge like
 margin spec in CSS (top,right,bottom,left).  Fos scaling, you set both the width and height, or
@@ -85,10 +85,42 @@ and the position bottom-left.
 If "exiftool" command is available on your system, EXIF metadata and ICC profile of the first
 input image is conveyed to the merged image.
 
-If "align_image_stack" of Hugin is available on your system, you can use it to align images.  If
-the default behavior by OpenCV doesn't work, try this alternative method.
+The following mergeing methods are supported.
 
-  $ itb_stack input*.jpg -o output.jpg -ax --align-hugin
+  - average (a) : average composition (default)
+  - weighted (w) : weighted average composition, suitable for pseudo-STF
+  - debevec (d) : Debevec's method, to make an HDR image, for natural result
+  - robertson (r) : Robertson's method, to make an HDR image, for the most recognizable shapes
+  - mergens (m) : Mergen's method, to make a pseudo-HDR image by blending
+  - stitch (s) : to make a panorama image
+
+Only devebec supports tone mapping for postprocessing.  The following methods are supported.
+
+  - linear (l) : linear conversion
+  - reinhard (r) : Reinhard's method, based on human recognition model
+  - drago (d) : Drago's method, based on logarithmic model
+  - mantuik (m) : Mentuik's method, maximizing local contrast to enhance detail
+
+The following aligning methods are supported.
+
+  - none : to do nothing (default)
+  - orb (o) : ORB, fast but less accurate
+  - ecc (e) : ECC, good balance, optimized to small shifts from camera shake
+  - sift (s) : SIFT, slow but more accurate, robust to scale and rotation too
+  - hugin (h) : to call Hugin's align_image_stack as an external command
+
+To make a peudo-STF image, averaging exposure and weighted average composition make the best
+result in most cases.
+
+  $ itb_stack input*.jpg -o output.jpg -ax -m w -a s
+
+To make an HDR image, combining Debevec and Robertson methods makes the best result in most cases.
+
+  $ itb_stack input*.jpg -o output.jpg -m d -t r -a s
+
+To reduce effect of camera shake during bracketting shoot, utilizing an alignment method is
+recommended.  Usually SIFT is recommended as in the above examples.  However, each method has
+its pros and cons.  Thus, try different ones: ECC, ORB, and Hugin in sequence.
 
 
 == END OF FILE ==
