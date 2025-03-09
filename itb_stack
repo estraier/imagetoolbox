@@ -535,7 +535,6 @@ def merge_images_debevec(images, meta_list):
                  for image in images]
   merger = cv2.createMergeDebevec()
   hdr = merger.process(byte_images, times=exposures)
-  print(hdr.dtype)
   return hdr
 
 
@@ -700,7 +699,7 @@ def parse_trim_expression(expression):
   else:
     raise ValueError("trim expression must contain 1 to 4 values")
   clip = lambda v: min(max(float(v), 0), 100) / 100
-  return clip(t), clip(l), clip(b), clip(r)
+  return clip(t), clip(r), clip(b), clip(l)
 
 
 def parse_scale_expression(expression):
