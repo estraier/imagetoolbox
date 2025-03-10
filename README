@@ -96,7 +96,9 @@ The following mergeing methods are supported.
 
   - average (a) : average composition (default)
   - weighted (w) : weighted average composition, suitable for pseudo-STF
-  - median (q) : median composition, suitable for noise reduction
+  - median (mdn) : median composition, suitable for noise reduction
+  - minimum (min) : minimum value composition, suitable to moving light sources
+  - maximum (max) : maximum value composition, suitable for star trailing
   - debevec (d) : Debevec's method, to make an HDR image, for natural result
   - robertson (r) : Robertson's method, to make an HDR image, for the most recognizable shapes
   - mergens (m) : Mergen's method, to make a pseudo-HDR image by blending

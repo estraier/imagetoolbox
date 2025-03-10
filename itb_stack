@@ -326,7 +326,7 @@ def align_images_orb(images):
       logger.debug(f"image has no descriptors")
       aligned_images.append(image)
       continue
-    logger.debug(f"detected {len(ref_kp)} key points in the target")
+    logger.debug(f"detected {len(kp)} key points in the target")
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matches = bf.match(ref_des, des)
     matches = sorted(matches, key=lambda x: x.distance)
@@ -560,6 +560,16 @@ def merge_images_median(images):
   return np.median(images, axis=0)
 
 
+def merge_images_minimum(images):
+  """Merges images by minimum value composition."""
+  return np.min(images, axis=0)
+
+
+def merge_images_maximum(images):
+  """Merges images by maximum value composition."""
+  return np.max(images, axis=0)
+
+
 def calculate_stf_weights(f_numbers):
   """Calculates weights for each F-numbers for STF."""
   blur_radii = 1 / np.array(f_numbers)
@@ -790,7 +800,8 @@ def main():
                   " none (default), orb, ecc, sift, hugin")
   ap.add_argument("--merge", "-m", default="average", metavar="name",
                   help="Choose a processing method for merging:"
-                  " average (default), median, weighted, debevec, robertson, mertens, stitch")
+                  " average (default), median, max, min, weighted,"
+                  " debevec, robertson, mertens, stitch")
   ap.add_argument("--tonemap", "-t", default="linear", metavar="name",
                   help="Choose a tone mapping method for debevec:"
                   " linear (default), reinhard, drago, mantiuk")
@@ -852,9 +863,15 @@ def main():
   if args.merge in ["average", "a"]:
     logger.info(f"Merging images by average composition")
     merged_image = merge_images_average(images)
-  elif args.merge in ["median", "q"]:
+  elif args.merge in ["median", "mdn"]:
     logger.info(f"Merging images by median composition")
     merged_image = merge_images_median(images)
+  elif args.merge in ["minimum", "min"]:
+    logger.info(f"Merging images by minimum composition")
+    merged_image = merge_images_minimum(images)
+  elif args.merge in ["maximum", "max"]:
+    logger.info(f"Merging images by maximum composition")
+    merged_image = merge_images_maximum(images)
   elif args.merge in ["weighted", "w"]:
     logger.info(f"Merging images by weighted average composition")
     merged_image = merge_images_weighted_average(images, meta_list)
