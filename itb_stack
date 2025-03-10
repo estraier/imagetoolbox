@@ -220,7 +220,7 @@ def inverse_sigmoidal_contrast_image(image, gain, mid):
   return np.clip((naive_inverse_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
 
 
-def gaussian_blur_image(image, ksize):
+def gaussian_blur_image(image, radius):
   """Applies Gaussian blur."""
   ksize = math.ceil(2 * radius) + 1
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
@@ -805,9 +805,9 @@ def main():
   ap.add_argument("--caption", default="", metavar="text",
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--blur", type=float, default=0, metavar="num",
-                  help="apply Gaussian blur by the pixel.")
+                  help="apply Gaussian blur by the pixel radius.")
   ap.add_argument("--unsharp", type=float, default=0, metavar="num",
-                  help="apply Gaussian unsharp mask by the pixel.")
+                  help="apply Gaussian unsharp mask by the pixel radius.")
   ap.add_argument("--trim", default="", metavar="numlist",
                   help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
   ap.add_argument("--scale", default="", metavar="numlist",
