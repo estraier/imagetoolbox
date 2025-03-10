@@ -14,7 +14,7 @@ Python3 is required to run scripts.  Required libraries are the following.
 
 To install them, run the following command.
 
-  $ pip3 pip3 install opencv-python-headless numpy exifread
+  $ pip3 pip3 install opencv-contrib-python numpy exifread
 
 Optionally, those tools can be executed implicitly.
 
@@ -96,6 +96,7 @@ The following mergeing methods are supported.
 
   - average (a) : average composition (default)
   - weighted (w) : weighted average composition, suitable for pseudo-STF
+  - median (q) : median composition, suitable for noise reduction
   - debevec (d) : Debevec's method, to make an HDR image, for natural result
   - robertson (r) : Robertson's method, to make an HDR image, for the most recognizable shapes
   - mergens (m) : Mergen's method, to make a pseudo-HDR image by blending

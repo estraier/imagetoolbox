@@ -204,22 +204,45 @@ def naive_inverse_sigmoid(x, gain, mid):
   return -np.log(1.0 / a - 1.0) / gain
 
 
-def sigmoidal_contrast(image, gain, mid):
+def sigmoidal_contrast_image(image, gain, mid):
   """Applies sigmoidal contrast adjustment with a scaled sigmoid function."""
   min_val = naive_sigmoid(0.0, gain, mid)
   max_val = naive_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
-  return np.clip((naive_sigmoid(image, gain, mid) - min_val) / diff,
-                 0, 1).astype(np.float32)
+  return np.clip((naive_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
 
 
-def inverse_sigmoidal_contrast(image, gain, mid):
+def inverse_sigmoidal_contrast_image(image, gain, mid):
   """Applies inverse sigmoidal contrast adjustment."""
   min_val = naive_inverse_sigmoid(0.0, gain, mid)
   max_val = naive_inverse_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
-  return np.clip((naive_inverse_sigmoid(
-    image, gain, mid) - min_val) / diff, 0, 1).astype(np.float32)
+  return np.clip((naive_inverse_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
+
+
+def gaussian_blur_image(image, ksize):
+  """Applies Gaussian blur."""
+  ksize = math.ceil(2 * radius) + 1
+  return cv2.GaussianBlur(image, (ksize, ksize), 0)
+
+
+def gaussian_unsharp_image(image, radius):
+  """Applies unsharp mask by Gaussian blur."""
+  ksize = math.ceil(2 * radius) + 1
+  if radius == 1:
+    sigma = 0.8
+    amount = 1.5
+    threshold=0.01
+  else:
+    sigma = radius / 2
+    amount = 1.2
+    threshold=0.03
+  blur_image = cv2.GaussianBlur(image, (ksize, ksize), sigma)
+  diff_image = image - blur_image
+  mask = np.abs(diff_image) > threshold
+  diff_image *= amount * mask.astype(np.float32)
+  sharp_image = image + diff_image
+  return np.clip(sharp_image, 0, 1)
 
 
 def adjust_exposure(image, target_brightness):
@@ -254,8 +277,33 @@ def adjust_exposure(image, target_brightness):
   return image
 
 
+def is_homography_valid(m, width, height):
+  """Checks if homography is valid."""
+  dx, dy = abs(m[0, 2]), abs(m[1, 2])
+  if dx > width / 10 or dy > height / 10:
+    return False
+  scale_x, scale_y = abs(m[0, 0]), abs(m[1, 1])
+  if scale_x < 0.8 or scale_x > 1.2 or scale_y < 0.8 or scale_y > 1.2:
+    return False
+  print("OK", dx, dy, scale_x, scale_y, width, height)
+  return True
+
+
+def log_homography_matrix(m):
+  """Print a log message of an homography matrix."""
+  sx, shear, dx = m[0]
+  shear_y, sy, dy = m[1]
+  scale_x = np.sqrt(sx**2 + shear**2)
+  scale_y = np.sqrt(sy**2 + shear_y**2)
+  tr_x = dx
+  tr_y = dy
+  angle = np.arctan2(shear, sx) * 180 / np.pi
+  logger.debug(f"warping: t=({tr_x:.2f},{tr_y:.2f}),"
+               f" s=({scale_x:.2f},{scale_y:.2f}), r={angle:.2f}")
+
+
 def align_images_orb(images):
-  """Aligns images using OpenCV."""
+  """Aligns images using ORB."""
   if len(images) < 2:
     return images
   ref_image = images[0]
@@ -267,6 +315,7 @@ def align_images_orb(images):
   if ref_des is None:
     logger.debug(f"reference image has no descriptors")
     return images
+  logger.debug(f"detected {len(ref_kp)} key points in the reference")
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
@@ -277,24 +326,25 @@ def align_images_orb(images):
       logger.debug(f"image has no descriptors")
       aligned_images.append(image)
       continue
+    logger.debug(f"detected {len(ref_kp)} key points in the target")
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matches = bf.match(ref_des, des)
     matches = sorted(matches, key=lambda x: x.distance)
     if len(matches) > 10:
       logger.debug(f"matches={len(matches)}")
-      src_pts = np.float32([ref_kp[m.queryIdx].pt
-                            for m in matches]).reshape(-1, 1, 2)
-      dst_pts = np.float32([kp[m.trainIdx].pt
-                            for m in matches]).reshape(-1, 1, 2)
+      src_pts = np.float32([ref_kp[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+      dst_pts = np.float32([kp[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
       m, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
       if m is not None:
-        logger.debug(f"warping: m={m}, w={w}, h={h}")
+        log_homography_matrix(m)
         aligned_image = cv2.warpPerspective(image, m, (w, h))
         aligned_images.append(aligned_image)
         corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
         transformed_corners = cv2.perspectiveTransform(corners, m)
-        x_min, y_min = np.min(transformed_corners, axis=0).flatten()
-        x_max, y_max = np.max(transformed_corners, axis=0).flatten()
+        x_min = np.min(transformed_corners[:, :, 0]).item()
+        y_min = np.min(transformed_corners[:, :, 1]).item()
+        x_max = np.max(transformed_corners[:, :, 0]).item()
+        y_max = np.max(transformed_corners[:, :, 1]).item()
         bounding_boxes.append((int(x_min), int(y_min), int(x_max), int(y_max)))
       else:
         logger.debug(f"no homography")
@@ -303,29 +353,29 @@ def align_images_orb(images):
       logger.debug(f"no matches")
       aligned_images.append(image)
   if bounding_boxes:
-    x_min = max(b[0] for b in bounding_boxes)
-    y_min = max(b[1] for b in bounding_boxes)
-    x_max = min(b[2] for b in bounding_boxes)
-    y_max = min(b[3] for b in bounding_boxes)
-    if x_min != 0 or y_min != 0 or x_max != w or y_max != h:
-      crop_w = x_max - x_min
-      crop_h = y_max - y_min
-      aspect_ratio = w / h
-      cropped_aspect_ratio = crop_w / crop_h
-      if cropped_aspect_ratio > aspect_ratio * 1.001:
-        new_crop_w = int(crop_h * aspect_ratio)
-        x_min = x_min + (crop_w - new_crop_w) // 2
-        x_max = x_min + new_crop_w
-      elif cropped_aspect_ratio < aspect_ratio * 0.999:
-        new_crop_h = int(crop_w / aspect_ratio)
-        y_min = y_min + (crop_h - new_crop_h) // 2
-        y_max = y_min + new_crop_h
-      logger.debug(f"cropping: x_min={x_min}, y_min={y_min},"
-                   f" x_max={x_max}, y_max={y_max}")
-      cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
-    else:
-      logger.debug(f"no need to crop")
-      cropped_images = aligned_images
+    x_min = min(b[0] for b in bounding_boxes)
+    y_min = min(b[1] for b in bounding_boxes)
+    x_max = max(b[2] for b in bounding_boxes)
+    y_max = max(b[3] for b in bounding_boxes)
+    x_min = np.clip(x_min, 0, w)
+    y_min = np.clip(y_min, 0, h)
+    x_max = np.clip(x_max, 0, w)
+    y_max = np.clip(y_max, 0, h)
+    crop_w = x_max - x_min
+    crop_h = y_max - y_min
+    aspect_ratio = w / h
+    cropped_aspect_ratio = crop_w / crop_h
+    if cropped_aspect_ratio > aspect_ratio * 1.01:
+      new_crop_w = int(crop_h * aspect_ratio)
+      x_min = x_min + (crop_w - new_crop_w) // 2
+      x_max = x_min + new_crop_w
+    elif cropped_aspect_ratio < aspect_ratio * 0.99:
+      new_crop_h = int(crop_w / aspect_ratio)
+      y_min = y_min + (crop_h - new_crop_h) // 2
+      y_max = y_min + new_crop_h
+    logger.debug(f"cropping: x_min={x_min}, y_min={y_min},"
+                 f" x_max={x_max}, y_max={y_max}")
+    cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
   else:
     logger.debug(f"no need to crop")
     cropped_images = aligned_images
@@ -347,43 +397,44 @@ def align_images_ecc(images):
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 1e-6)
     try:
       cc, warp_matrix = cv2.findTransformECC(
-        ref_gray, image_gray, warp_matrix, cv2.MOTION_AFFINE, criteria
-      )
+        ref_gray, image_gray, warp_matrix, cv2.MOTION_AFFINE, criteria)
       logger.debug(f"convergence: cc={cc}")
       aligned_image = cv2.warpAffine(
         image, warp_matrix, (w, h), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
       aligned_images.append(aligned_image)
       corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
       transformed_corners = cv2.transform(corners, warp_matrix)
-      x_min, y_min = np.min(transformed_corners, axis=0).flatten()
-      x_max, y_max = np.max(transformed_corners, axis=0).flatten()
+      x_min = np.min(transformed_corners[:, :, 0]).item()
+      y_min = np.min(transformed_corners[:, :, 1]).item()
+      x_max = np.max(transformed_corners[:, :, 0]).item()
+      y_max = np.max(transformed_corners[:, :, 1]).item()
       bounding_boxes.append((int(x_min), int(y_min), int(x_max), int(y_max)))
     except cv2.error as e:
       logger.debug(f"alignment failed: {e}")
       aligned_images.append(image)
   if bounding_boxes:
-    x_min = max(b[0] for b in bounding_boxes)
-    y_min = max(b[1] for b in bounding_boxes)
-    x_max = min(b[2] for b in bounding_boxes)
-    y_max = min(b[3] for b in bounding_boxes)
-    if x_min != 0 or y_min != 0 or x_max != w or y_max != h:
-      crop_w = x_max - x_min
-      crop_h = y_max - y_min
-      aspect_ratio = w / h
-      cropped_aspect_ratio = crop_w / crop_h
-      if cropped_aspect_ratio > aspect_ratio * 1.001:
-        new_crop_w = int(crop_h * aspect_ratio)
-        x_min = x_min + (crop_w - new_crop_w) // 2
-        x_max = x_min + new_crop_w
-      elif cropped_aspect_ratio < aspect_ratio * 0.999:
-        new_crop_h = int(crop_w / aspect_ratio)
-        y_min = y_min + (crop_h - new_crop_h) // 2
-        y_max = y_min + new_crop_h
-      logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
-      cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
-    else:
-      logger.debug("no need to crop")
-      cropped_images = aligned_images
+    x_min = min(b[0] for b in bounding_boxes)
+    y_min = min(b[1] for b in bounding_boxes)
+    x_max = max(b[2] for b in bounding_boxes)
+    y_max = max(b[3] for b in bounding_boxes)
+    x_min = np.clip(x_min, 0, w)
+    y_min = np.clip(y_min, 0, h)
+    x_max = np.clip(x_max, 0, w)
+    y_max = np.clip(y_max, 0, h)
+    crop_w = x_max - x_min
+    crop_h = y_max - y_min
+    aspect_ratio = w / h
+    cropped_aspect_ratio = crop_w / crop_h
+    if cropped_aspect_ratio > aspect_ratio * 1.01:
+      new_crop_w = int(crop_h * aspect_ratio)
+      x_min = x_min + (crop_w - new_crop_w) // 2
+      x_max = x_min + new_crop_w
+    elif cropped_aspect_ratio < aspect_ratio * 0.99:
+      new_crop_h = int(crop_w / aspect_ratio)
+      y_min = y_min + (crop_h - new_crop_h) // 2
+      y_max = y_min + new_crop_h
+    logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
+    cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
   else:
     logger.debug("no need to crop")
     cropped_images = aligned_images
@@ -422,13 +473,15 @@ def align_images_sift(images):
       dst_pts = np.float32([kp[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
       m, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
       if m is not None:
-        logger.debug(f"warping: matrix={m}")
+        log_homography_matrix(m)
         aligned_image = cv2.warpPerspective(image, m, (w, h))
         aligned_images.append(aligned_image)
         corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
         transformed_corners = cv2.perspectiveTransform(corners, m)
-        x_min, y_min = np.min(transformed_corners, axis=0).flatten()
-        x_max, y_max = np.max(transformed_corners, axis=0).flatten()
+        x_min = np.min(transformed_corners[:, :, 0]).item()
+        y_min = np.min(transformed_corners[:, :, 1]).item()
+        x_max = np.max(transformed_corners[:, :, 0]).item()
+        y_max = np.max(transformed_corners[:, :, 1]).item()
         bounding_boxes.append((int(x_min), int(y_min), int(x_max), int(y_max)))
       else:
         logger.debug("no homography found")
@@ -437,28 +490,28 @@ def align_images_sift(images):
       logger.debug("not enough good matches")
       aligned_images.append(image)
   if bounding_boxes:
-    x_min = max(b[0] for b in bounding_boxes)
-    y_min = max(b[1] for b in bounding_boxes)
-    x_max = min(b[2] for b in bounding_boxes)
-    y_max = min(b[3] for b in bounding_boxes)
-    if x_min != 0 or y_min != 0 or x_max != w or y_max != h:
-      crop_w = x_max - x_min
-      crop_h = y_max - y_min
-      aspect_ratio = w / h
-      cropped_aspect_ratio = crop_w / crop_h
-      if cropped_aspect_ratio > aspect_ratio * 1.001:
-        new_crop_w = int(crop_h * aspect_ratio)
-        x_min = x_min + (crop_w - new_crop_w) // 2
-        x_max = x_min + new_crop_w
-      elif cropped_aspect_ratio < aspect_ratio * 0.999:
-        new_crop_h = int(crop_w / aspect_ratio)
-        y_min = y_min + (crop_h - new_crop_h) // 2
-        y_max = y_min + new_crop_h
-      logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
-      cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
-    else:
-      logger.debug("no need to crop")
-      cropped_images = aligned_images
+    x_min = min(b[0] for b in bounding_boxes)
+    y_min = min(b[1] for b in bounding_boxes)
+    x_max = max(b[2] for b in bounding_boxes)
+    y_max = max(b[3] for b in bounding_boxes)
+    x_min = np.clip(x_min, 0, w)
+    y_min = np.clip(y_min, 0, h)
+    x_max = np.clip(x_max, 0, w)
+    y_max = np.clip(y_max, 0, h)
+    crop_w = x_max - x_min
+    crop_h = y_max - y_min
+    aspect_ratio = w / h
+    cropped_aspect_ratio = crop_w / crop_h
+    if cropped_aspect_ratio > aspect_ratio * 1.01:
+      new_crop_w = int(crop_h * aspect_ratio)
+      x_min = x_min + (crop_w - new_crop_w) // 2
+      x_max = x_min + new_crop_w
+    elif cropped_aspect_ratio < aspect_ratio * 0.99:
+      new_crop_h = int(crop_w / aspect_ratio)
+      y_min = y_min + (crop_h - new_crop_h) // 2
+      y_max = y_min + new_crop_h
+    logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
+    cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
   else:
     logger.debug("no need to crop")
     cropped_images = aligned_images
@@ -502,6 +555,11 @@ def merge_images_average(images):
   return np.mean(images, axis=0)
 
 
+def merge_images_median(images):
+  """Merges images by median composition."""
+  return np.median(images, axis=0)
+
+
 def calculate_stf_weights(f_numbers):
   """Calculates weights for each F-numbers for STF."""
   blur_radii = 1 / np.array(f_numbers)
@@ -523,7 +581,7 @@ def merge_images_weighted_average(images, meta_list):
 
 
 def merge_images_debevec(images, meta_list):
-  """Merges images by Debevec HDR method."""
+  """Merges images by Debevec's method."""
   light_values = [get_light_value(meta) for meta in meta_list]
   if None in light_values:
     brightness_values = np.array([compute_brightness(image) for image in images])
@@ -539,7 +597,7 @@ def merge_images_debevec(images, meta_list):
 
 
 def merge_images_robertson(images, meta_list):
-  """Merges images by Robertson HDR method."""
+  """Merges images by Robertson's method."""
   light_values = [get_light_value(meta) for meta in meta_list]
   if None in light_values:
     brightness_values = np.array([compute_brightness(image) for image in images])
@@ -555,7 +613,7 @@ def merge_images_robertson(images, meta_list):
 
 
 def merge_images_mertens(images):
-  """Merges images by Mertens HDR method."""
+  """Merges images by Mertens's method."""
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
   merger = cv2.createMergeMertens()
@@ -581,7 +639,7 @@ def tone_map_image_linear(image):
 
 
 def tone_map_image_reinhard(image):
-  """Applies tone mapping by Reinhard method."""
+  """Applies tone mapping by Reinhard's method."""
   tonemap = cv2.createTonemapReinhard(gamma=1.0, intensity=0, light_adapt=0.5,
                                       color_adapt=0.5)
   ldr = np.clip(tonemap.process(image), 0, 1)
@@ -589,14 +647,14 @@ def tone_map_image_reinhard(image):
 
 
 def tone_map_image_drago(image):
-  """Applies tone mapping by Drago method."""
+  """Applies tone mapping by Drago's method."""
   tonemap = cv2.createTonemapDrago(gamma=1.0, saturation=1.0, bias=0.9)
   ldr = np.clip(tonemap.process(image), 0, 1)
   return ldr
 
 
 def tone_map_image_mantiuk(image):
-  """Applies tone mapping by Mantiuk method."""
+  """Applies tone mapping by Mantiuk's method."""
   tonemap = cv2.createTonemapMantiuk(gamma=1.0, scale=0.9, saturation=1.0)
   ldr = np.clip(tonemap.process(image), 0, 1)
   return ldr
@@ -732,7 +790,7 @@ def main():
                   " none (default), orb, ecc, sift, hugin")
   ap.add_argument("--merge", "-m", default="average", metavar="name",
                   help="Choose a processing method for merging:"
-                  " average (default), weighted, debevec, robertson, mertens, stitch")
+                  " average (default), median, weighted, debevec, robertson, mertens, stitch")
   ap.add_argument("--tonemap", "-t", default="linear", metavar="name",
                   help="Choose a tone mapping method for debevec:"
                   " linear (default), reinhard, drago, mantiuk")
@@ -746,6 +804,10 @@ def main():
                   " positive to strengthen, negative to weaken")
   ap.add_argument("--caption", default="", metavar="text",
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
+  ap.add_argument("--blur", type=float, default=0, metavar="num",
+                  help="apply Gaussian blur by the pixel.")
+  ap.add_argument("--unsharp", type=float, default=0, metavar="num",
+                  help="apply Gaussian unsharp mask by the pixel.")
   ap.add_argument("--trim", default="", metavar="numlist",
                   help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
   ap.add_argument("--scale", default="", metavar="numlist",
@@ -758,7 +820,7 @@ def main():
   if args.debug:
     logger.setLevel(logging.DEBUG)
   logger.debug(f"{PROG_NAME}={PROG_VERSION},"
-               " OpenCV={cv2.__version__}, NumPy={np.__version__}")
+               f" OpenCV={cv2.__version__}, NumPy={np.__version__}")
   logger.info(f"Process started: input={args.images}, output={args.output}")
   logger.info(f"Loading the input files")
   images_data = [load_image(input_path) for input_path in args.images]
@@ -790,18 +852,21 @@ def main():
   if args.merge in ["average", "a"]:
     logger.info(f"Merging images by average composition")
     merged_image = merge_images_average(images)
+  elif args.merge in ["median", "q"]:
+    logger.info(f"Merging images by median composition")
+    merged_image = merge_images_median(images)
   elif args.merge in ["weighted", "w"]:
     logger.info(f"Merging images by weighted average composition")
     merged_image = merge_images_weighted_average(images, meta_list)
   elif args.merge in ["debevec", "d"]:
-    logger.info(f"Merging images by Debevec method as an HDRI")
+    logger.info(f"Merging images by Debevec's method as an HDRI")
     merged_image = merge_images_debevec(images, meta_list)
     is_hdr = True
   elif args.merge in ["robertson", "r"]:
-    logger.info(f"Merging images by Robertson method")
+    logger.info(f"Merging images by Robertson's method")
     merged_image = merge_images_robertson(images, meta_list)
   elif args.merge in ["mertens", "m"]:
-    logger.info(f"Merging images by Mertens method")
+    logger.info(f"Merging images by Mertens's method")
     merged_image = merge_images_mertens(images)
   elif args.merge in ["stitch", "s"]:
     logger.info(f"Stitching images as a panorama photo")
@@ -809,17 +874,17 @@ def main():
   else:
     raise ValueError(f"Unknown merge method")
   if is_hdr:
-    if args.tone in ["linear", "l"]:
+    if args.tonemap in ["linear", "l"]:
       logger.info(f"Tone mapping images by linear reduction")
       merged_image = tone_map_image_linear(merged_image)
-    elif args.tone in ["reinhard", "r"]:
-      logger.info(f"Tone mapping images by Reinhard method")
+    elif args.tonemap in ["reinhard", "r"]:
+      logger.info(f"Tone mapping images by Reinhard's method")
       merged_image = tone_map_image_reinhard(merged_image)
-    elif args.tone in ["drago", "d"]:
-      logger.info(f"Tone mapping images by Drago method")
+    elif args.tonemap in ["drago", "d"]:
+      logger.info(f"Tone mapping images by Drago's method")
       merged_image = tone_map_image_drago(merged_image)
-    elif args.tone in ["mantiuk", "m"]:
-      logger.info(f"Tone mapping images by Mantiuk method")
+    elif args.tonemap in ["mantiuk", "m"]:
+      logger.info(f"Tone mapping images by Mantiuk's method")
       merged_image = tone_map_image_mantiuk(merged_image)
     else:
       raise ValueError(f"Unknown tone method")
@@ -834,10 +899,16 @@ def main():
     merged_image = darken_image(merged_image, -args.slog)
   if args.sigmoid > 0:
     logger.info(f"Strenghenining the contrast")
-    merged_image = sigmoidal_contrast(merged_image, args.sigmoid, 0.5)
+    merged_image = sigmoidal_contrast_image(merged_image, args.sigmoid, 0.5)
   elif args.sigmoid < 0:
     logger.info(f"Weakening the contrast")
-    merged_image = inverse_sigmoidal_contrast(merged_image, -args.sigmoid, 0.5)
+    merged_image = inverse_sigmoidal_contrast_image(merged_image, -args.sigmoid, 0.5)
+  if args.blur > 0:
+    logger.info(f"Applying Gaussian blur")
+    merged_image = gaussian_blur_image(merged_image, args.blur)
+  if args.unsharp > 0:
+    logger.info(f"Applying Gaussian unsharp mask")
+    merged_image = gaussian_unsharp_image(merged_image, args.unsharp)
   if trim_params:
     logger.info(f"Trimming the image")
     merged_image = trim_image(merged_image, *trim_params)
