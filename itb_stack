@@ -812,18 +812,18 @@ def main():
                   " positive to strengthen, negative to weaken")
   ap.add_argument("--caption", default="", metavar="text",
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
-  ap.add_argument("--blur", type=float, default=0, metavar="num",
+  ap.add_argument("--blur", type=int, default=0, metavar="num",
                   help="apply Gaussian blur by the pixel radius.")
-  ap.add_argument("--unsharp", type=float, default=0, metavar="num",
+  ap.add_argument("--unsharp", type=int, default=0, metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
   ap.add_argument("--trim", default="", metavar="numlist",
                   help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
   ap.add_argument("--scale", default="", metavar="numlist",
                   help="trim sides: WIDTH,HEIGHT in pixels eg. 1920,1080")
+  ap.add_argument("--video", type=float, default=0, metavar="num",
+                  help="output a video file with the FPS")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   args = ap.parse_args()
-  trim_params = parse_trim_expression(args.trim) if len(args.trim) > 0 else None
-  scale_params = parse_scale_expression(args.scale) if len(args.scale) > 0 else None
   start_time = time.time()
   if args.debug:
     logger.setLevel(logging.DEBUG)
@@ -856,6 +856,49 @@ def main():
     images = align_images_hugin(images, args.images, bits_list)
   else:
     raise ValueError(f"Unknown align method")
+  if args.video > 0:
+    postprocess_video(args, images)
+  else:
+    postprocess_images(args, images, bits_list, meta_list, mean_brightness)
+  elapsed_time = time.time() - start_time
+  logger.info(f"Process done: time={elapsed_time:.2f}s")
+
+
+def postprocess_video(args, images):
+  """Postprocess images as a video."""
+  fps = args.video
+  h, w = images[0].shape[:2]
+  ext = args.output.split(".")[-1].lower()
+  if ext not in ["mp4", "mov"]:
+    raise ValueError(f"Unsupported file format: {ext}")
+  cc = cv2.VideoWriter_fourcc(*"mp4v")  # MOV codec
+  logger.info(f"Saving the output file as a video")
+  out = cv2.VideoWriter(args.output, cc, fps, (w, h))
+  for image in images:
+    if image.shape[:2] != (h, w):
+      image = crop_to_match(image, (h, w))
+    srgb_image = linear_to_srgb(image)
+    uint8_image = (srgb_image * 255).astype(np.uint8)
+    out.write(uint8_image)
+  out.release()
+  if has_command(CMD_EXIFTOOL):
+    logger.info(f"Copying metadata")
+    copy_metadata(args.images[0], args.output)
+
+
+def crop_to_match(image, target_size):
+  """Crops the center of the image to match the target size."""
+  h, w = image.shape[:2]
+  th, tw = target_size
+  y_offset = max((h - th) // 2, 0)
+  x_offset = max((w - tw) // 2, 0)
+  return image[y_offset:y_offset+th, x_offset:x_offset+tw]
+
+
+def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
+  """Postprocess images as a merged image."""
+  trim_params = parse_trim_expression(args.trim) if len(args.trim) > 0 else None
+  scale_params = parse_scale_expression(args.scale) if len(args.scale) > 0 else None
   is_hdr = False
   if args.merge in ["average", "a"]:
     logger.info(f"Merging images by average composition")
@@ -934,13 +977,11 @@ def main():
   if len(args.caption) > 0:
     logger.info(f"Writing the caption")
     merged_image = write_caption(args.caption, merged_image)
-  logger.info(f"Saving the output file")
+  logger.info(f"Saving the output file as an image")
   save_image(args.output, merged_image, bits_list[0])
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
     copy_metadata(args.images[0], args.output)
-  elapsed_time = time.time() - start_time
-  logger.info(f"Process done: time={elapsed_time:.2f}s")
 
 
 if __name__ == "__main__":
