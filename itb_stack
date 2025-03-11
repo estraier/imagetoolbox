@@ -627,6 +627,33 @@ def merge_images_mertens(images):
   return hdr
 
 
+def compute_sharpness(image):
+  """Computes edge strength by Laplacian filter."""
+  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  sharpness = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
+  return sharpness
+
+
+def merge_images_focus_stacking(images):
+  """Merges images by focus stacking."""
+  h, w, c = images[0].shape
+  sharpness_maps = np.array([compute_sharpness(img) for img in images])  # (N, H, W)
+  best_focus_index = np.argmax(sharpness_maps, axis=0)  # (H, W)
+  stacked_image = np.zeros_like(images[0])
+  final_mask = np.zeros((h, w), dtype=np.uint8)
+  for i in range(len(images)):
+    logger.debug(f"stacking the {i+1}/{len(images)} image")
+    mask = (best_focus_index == i).astype(np.uint8) * 255
+    cv2.copyTo(images[i], mask, stacked_image)
+    final_mask = np.maximum(final_mask, mask)
+  logger.debug("smoothing stitches")
+  refined_mask = cv2.dilate(final_mask, np.ones((5, 5), np.uint8), iterations=2)
+  blended_image = cv2.seamlessClone(
+    (stacked_image * 255).astype(np.uint8), (images[0] * 255).astype(np.uint8),
+    refined_mask, (w // 2, h // 2), cv2.NORMAL_CLONE)
+  return blended_image.astype(np.float32) / 255.0
+
+
 def stitch_images(images):
   """Stitches images as a panorama photo and removes black margins."""
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8) for image in images]
@@ -820,7 +847,7 @@ def main():
   ap.add_argument("--merge", "-m", default="average", metavar="name",
                   help="Choose a processing method for merging:"
                   " average (default), median, max, min, weighted,"
-                  " debevec, robertson, mertens, stitch")
+                  " debevec, robertson, mertens, focus, stitch")
   ap.add_argument("--tonemap", "-t", default="linear", metavar="name",
                   help="Choose a tone mapping method for debevec:"
                   " linear (default), reinhard, drago, mantiuk")
@@ -949,6 +976,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif args.merge in ["mertens", "m"]:
     logger.info(f"Merging images by Mertens's method")
     merged_image = merge_images_mertens(images)
+  elif args.merge in ["focus", "f"]:
+    logger.info(f"Merging images by focus stacking")
+    merged_image = merge_images_focus_stacking(images)
   elif args.merge in ["stitch", "s"]:
     logger.info(f"Stitching images as a panorama photo")
     merged_image = stitch_images(images)
