@@ -125,8 +125,8 @@ The following aligning methods are supported.
 
   - none : to do nothing (default)
   - orb (o) : ORB, fast but less accurate
-  - ecc (e) : ECC, good balance, optimized to small shifts from camera shake
   - sift (s) : SIFT, slow but more accurate, robust to scale and rotation too
+  - ecc (e) : ECC, good balance, optimized to small shifts from camera shake
   - hugin (h) : to call Hugin's align_image_stack as an external command
 
 In summary, to make a peudo-STF image, averaging exposure and weighted average composition make

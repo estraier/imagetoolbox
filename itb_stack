@@ -379,64 +379,6 @@ def align_images_orb(images):
   return cropped_images
 
 
-def align_images_ecc(images):
-  if len(images) < 2:
-    return images
-  ref_image = images[0]
-  h, w = ref_image.shape[:2]
-  ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
-  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
-  aligned_images = [ref_image]
-  bounding_boxes = []
-  for image in images[1:]:
-    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
-    warp_matrix = np.eye(2, 3, dtype=np.float32)
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 1e-6)
-    try:
-      cc, warp_matrix = cv2.findTransformECC(
-        ref_gray, image_gray, warp_matrix, cv2.MOTION_AFFINE,
-        criteria, inputMask=None, gaussFiltSize=5)
-      logger.debug(f"homography matrix: {warp_matrix}")
-      aligned_image = cv2.warpAffine(
-        image, warp_matrix, (w, h), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP,
-        borderMode=cv2.BORDER_REPLICATE)
-      aligned_images.append(aligned_image)
-      corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
-      transformed_corners = cv2.transform(corners, warp_matrix)
-      x_min = np.min(transformed_corners[:, :, 0]).item()
-      y_min = np.min(transformed_corners[:, :, 1]).item()
-      x_max = np.max(transformed_corners[:, :, 0]).item()
-      y_max = np.max(transformed_corners[:, :, 1]).item()
-      bounding_boxes.append((int(x_min), int(y_min), int(x_max), int(y_max)))
-    except cv2.error:
-      logger.debug("alignment failed")
-      aligned_images.append(image)
-  if bounding_boxes:
-    x_min = max(min(b[0] for b in bounding_boxes), 0)
-    y_min = max(min(b[1] for b in bounding_boxes), 0)
-    x_max = min(max(b[2] for b in bounding_boxes), w)
-    y_max = min(max(b[3] for b in bounding_boxes), h)
-    crop_w = x_max - x_min
-    crop_h = y_max - y_min
-    aspect_ratio = w / h
-    cropped_aspect_ratio = crop_w / crop_h
-    if cropped_aspect_ratio > aspect_ratio * 1.01:
-      new_crop_w = int(crop_h * aspect_ratio)
-      x_min += (crop_w - new_crop_w) // 2
-      x_max = x_min + new_crop_w
-    elif cropped_aspect_ratio < aspect_ratio * 0.99:
-      new_crop_h = int(crop_w / aspect_ratio)
-      y_min += (crop_h - new_crop_h) // 2
-      y_max = y_min + new_crop_h
-    logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
-    cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
-  else:
-    logger.debug("no need to crop")
-    cropped_images = aligned_images
-  return cropped_images
-
-
 def align_images_sift(images):
   """Aligns images using SIFT."""
   if len(images) < 2:
@@ -505,6 +447,64 @@ def align_images_sift(images):
     elif cropped_aspect_ratio < aspect_ratio * 0.99:
       new_crop_h = int(crop_w / aspect_ratio)
       y_min = y_min + (crop_h - new_crop_h) // 2
+      y_max = y_min + new_crop_h
+    logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
+    cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
+  else:
+    logger.debug("no need to crop")
+    cropped_images = aligned_images
+  return cropped_images
+
+
+def align_images_ecc(images):
+  if len(images) < 2:
+    return images
+  ref_image = images[0]
+  h, w = ref_image.shape[:2]
+  ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
+  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
+  aligned_images = [ref_image]
+  bounding_boxes = []
+  for image in images[1:]:
+    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
+    warp_matrix = np.eye(2, 3, dtype=np.float32)
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 1e-6)
+    try:
+      cc, warp_matrix = cv2.findTransformECC(
+        ref_gray, image_gray, warp_matrix, cv2.MOTION_AFFINE,
+        criteria, inputMask=None, gaussFiltSize=5)
+      log_homography_matrix(warp_matrix)
+      aligned_image = cv2.warpAffine(
+        image, warp_matrix, (w, h), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP,
+        borderMode=cv2.BORDER_REPLICATE)
+      aligned_images.append(aligned_image)
+      corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
+      transformed_corners = cv2.transform(corners, warp_matrix)
+      x_min = np.min(transformed_corners[:, :, 0]).item()
+      y_min = np.min(transformed_corners[:, :, 1]).item()
+      x_max = np.max(transformed_corners[:, :, 0]).item()
+      y_max = np.max(transformed_corners[:, :, 1]).item()
+      bounding_boxes.append((int(x_min), int(y_min), int(x_max), int(y_max)))
+    except cv2.error:
+      logger.debug("alignment failed")
+      aligned_images.append(image)
+  if bounding_boxes:
+    x_min = max(min(b[0] for b in bounding_boxes), 0)
+    y_min = max(min(b[1] for b in bounding_boxes), 0)
+    x_max = min(max(b[2] for b in bounding_boxes), w)
+    y_max = min(max(b[3] for b in bounding_boxes), h)
+    crop_w = x_max - x_min
+    crop_h = y_max - y_min
+    aspect_ratio = w / h
+    cropped_aspect_ratio = crop_w / crop_h
+    if cropped_aspect_ratio > aspect_ratio * 1.01:
+      new_crop_w = int(crop_h * aspect_ratio)
+      x_min += (crop_w - new_crop_w) // 2
+      x_max = x_min + new_crop_w
+    elif cropped_aspect_ratio < aspect_ratio * 0.99:
+      new_crop_h = int(crop_w / aspect_ratio)
+      y_min += (crop_h - new_crop_h) // 2
       y_max = y_min + new_crop_h
     logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
     cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
@@ -843,7 +843,7 @@ def main():
                   help="average input exposure")
   ap.add_argument("--align", "-a", default="none", metavar="name",
                   help="Choose an alignment method for input images:"
-                  " none (default), orb, ecc, sift, hugin")
+                  " none (default), orb, sift, ecc, hugin")
   ap.add_argument("--merge", "-m", default="average", metavar="name",
                   help="Choose a processing method for merging:"
                   " average (default), median, max, min, weighted,"
@@ -896,12 +896,12 @@ def main():
   elif args.align in ["orb", "o"]:
     logger.info(f"Aligning images by ORB")
     images = align_images_orb(images)
-  elif args.align in ["ecc", "e"]:
-    logger.info(f"Aligning images by ECC")
-    images = align_images_ecc(images)
   elif args.align in ["sift", "s"]:
     logger.info(f"Aligning images by SIFT")
     images = align_images_sift(images)
+  elif args.align in ["ecc", "e"]:
+    logger.info(f"Aligning images by ECC")
+    images = align_images_ecc(images)
   elif args.align in ["hugin", "h"]:
     logger.info(f"Aligning images by Hugin")
     images = align_images_hugin(images, args.images, bits_list)
