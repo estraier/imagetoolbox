@@ -36,7 +36,7 @@ import exifread
 import numpy as np
 
 
-PROG_NAME = "itb_combine"
+PROG_NAME = "itb_stack"
 PROG_VERSION = "0.0.1"
 CMD_EXIFTOOL = "exiftool"
 CMD_HUGIN_ALIGN = "align_image_stack"
