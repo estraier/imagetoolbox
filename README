@@ -45,7 +45,8 @@ exposure of each input image before merging.
   $ itb_stack input*.jpg -o output.jpg -ax -m w
 
 If bracketting is done hand-held without a tripod.  Pictures will be shifted a little, which
-causes blur after merging.  In that case, aligning input images is useful.
+causes blur after merging.  In that case, aligning input images is useful.  In most cases, SIFT
+aligner is best suited.
 
   $ itb_stack input*.jpg -o output.jpg -ax -m w -a s
 
@@ -55,7 +56,7 @@ method.
 
   $ itb_stack input*.jpg -o output.jpg -m d -t r
 
-Aligning images is useful to make HDR images of hand-held taken pictures.
+Aligning images is also useful to make HDR images of hand-held taken pictures.
 
   $ itb_stack input*.jpg -o output.jpg -m d -t r -a s
 
@@ -68,7 +69,14 @@ You can adjust brightness and contrast of the merged image manually.
 
   $ itb_stack input*.jpg -o output.jpg --slog 1.3 --sigmoid 2.4
 
-Focus stacking of images taken with different focus distance is also supported.
+Merging multiple picutures taken with high sensitivity is effective to suppress noise.  If the
+number of pictures ais less than 20, use median instead of average.  Moreover, ignoring unaligned
+images from merging is a practical solution against failures of aligning pictures.
+
+  $ itb_stack input*.jpg -o output.jpg -m median -a s -iu
+
+Focus stacking of images taken with different focus distance is also supported.  In this case,
+using ECC aligner is sometimes better than SIFT.
 
   $ itb_stack input*.jpg -o output.jpg -m f -nr -a e
 

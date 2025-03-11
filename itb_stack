@@ -276,30 +276,40 @@ def adjust_exposure(image, target_brightness):
 
 def is_homography_valid(m, width, height):
   """Checks if homography is valid."""
-  dx, dy = abs(m[0, 2]), abs(m[1, 2])
-  if dx > width / 10 or dy > height / 10:
-    return False
-  scale_x, scale_y = abs(m[0, 0]), abs(m[1, 1])
-  if scale_x < 0.8 or scale_x > 1.2 or scale_y < 0.8 or scale_y > 1.2:
-    return False
-  print("OK", dx, dy, scale_x, scale_y, width, height)
-  return True
-
-
-def log_homography_matrix(m):
-  """Print a log message of an homography matrix."""
+  scale_allowance = 0.05
+  shift_allowance = 0.05
+  rotation_allowance = 0.05
   sx, shear, dx = m[0]
   shear_y, sy, dy = m[1]
   scale_x = np.sqrt(sx**2 + shear**2)
   scale_y = np.sqrt(sy**2 + shear_y**2)
-  tr_x = dx
-  tr_y = dy
-  angle = np.arctan2(shear, sx) * 180 / np.pi
-  logger.debug(f"warping: t=({tr_x:.2f},{tr_y:.2f}),"
-               f" s=({scale_x:.2f},{scale_y:.2f}), r={angle:.2f}")
+  rotation = np.arctan2(m[1, 0], m[0, 0]) / np.pi
+  min_scale = 1 - scale_allowance
+  max_scale = 1 / min_scale
+  if not (-shift_allowance <= dx / width <= shift_allowance and
+          -shift_allowance <= dy / height <= shift_allowance):
+    return False
+  if not (min_scale <= scale_x <= max_scale and
+          min_scale <= scale_y <= max_scale):
+    return False
+  if abs(rotation) > rotation_allowance:
+    return False
+  print("OK", dx, dy, scale_x, scale_y, width, height, rotation)
+  return True
 
 
-def align_images_orb(images):
+def log_homography_matrix(m):
+  """Print a log message of a homography matrix."""
+  sx, shear, dx = m[0]
+  shear_y, sy, dy = m[1]
+  scale_x = np.sqrt(sx**2 + shear**2)
+  scale_y = np.sqrt(sy**2 + shear_y**2)
+  angle = np.arctan2(m[1, 0], m[0, 0]) * 180 / np.pi
+  logger.debug(f"warping: trran=({dx:.2f}, {dy:.2f}), "
+               f"scale=({scale_x:.2f}, {scale_y:.2f}), angle={angle:.2f}°")
+
+
+def align_images_orb(images, aligned_indices):
   """Aligns images using ORB."""
   if len(images) < 2:
     return images
@@ -313,6 +323,7 @@ def align_images_orb(images):
     logger.debug(f"reference image has no descriptors")
     return images
   logger.debug(f"detected {len(ref_kp)} key points in the reference")
+  aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
@@ -335,6 +346,8 @@ def align_images_orb(images):
       if m is not None:
         log_homography_matrix(m)
         aligned_image = cv2.warpPerspective(image, m, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        if is_homography_valid(m, w, h):
+          aligned_indices.add(len(aligned_images))
         aligned_images.append(aligned_image)
         corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
         transformed_corners = cv2.perspectiveTransform(corners, m)
@@ -379,7 +392,7 @@ def align_images_orb(images):
   return cropped_images
 
 
-def align_images_sift(images):
+def align_images_sift(images, aligned_indices):
   """Aligns images using SIFT."""
   if len(images) < 2:
     return images
@@ -392,6 +405,7 @@ def align_images_sift(images):
   if ref_des is None:
     logger.debug("reference image has no descriptors")
     return images
+  aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
@@ -413,6 +427,8 @@ def align_images_sift(images):
       if m is not None:
         log_homography_matrix(m)
         aligned_image = cv2.warpPerspective(image, m, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        if is_homography_valid(m, w, h):
+          aligned_indices.add(len(aligned_images))
         aligned_images.append(aligned_image)
         corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
         transformed_corners = cv2.perspectiveTransform(corners, m)
@@ -456,13 +472,14 @@ def align_images_sift(images):
   return cropped_images
 
 
-def align_images_ecc(images):
+def align_images_ecc(images, aligned_indices):
   if len(images) < 2:
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
   ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
   ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
+  aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
@@ -478,6 +495,8 @@ def align_images_ecc(images):
       aligned_image = cv2.warpAffine(
         image, warp_matrix, (w, h), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP,
         borderMode=cv2.BORDER_REPLICATE)
+      if is_homography_valid(warp_matrix, w, h):
+        aligned_indices.add(len(aligned_images))
       aligned_images.append(aligned_image)
       corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
       transformed_corners = cv2.transform(corners, warp_matrix)
@@ -835,7 +854,7 @@ def main():
   epilog = f"{PROG_NAME} version {PROG_VERSION}. Powered by OpenCV2."
   ap = argparse.ArgumentParser(
     prog=PROG_NAME, description=description, epilog=epilog,
-    formatter_class=argparse.RawDescriptionHelpFormatter)
+    formatter_class=argparse.RawDescriptionHelpFormatter, allow_abbrev=False)
   ap.add_argument("images", nargs='+', help="input image paths")
   ap.add_argument("--output", "-o", default="output.tif", metavar="path",
                   help="output image path (dafault=output.tif)")
@@ -844,6 +863,8 @@ def main():
   ap.add_argument("--align", "-a", default="none", metavar="name",
                   help="Choose an alignment method for input images:"
                   " none (default), orb, sift, ecc, hugin")
+  ap.add_argument("--ignore-unaligned", "-iu", action='store_true',
+                  help="Ignore unaligned images")
   ap.add_argument("--merge", "-m", default="average", metavar="name",
                   help="Choose a processing method for merging:"
                   " average (default), median, max, min, weighted,"
@@ -881,6 +902,9 @@ def main():
   logger.debug(f"{PROG_NAME}={PROG_VERSION},"
                f" OpenCV={cv2.__version__}, NumPy={np.__version__}")
   logger.info(f"Process started: input={args.images}, output={args.output}")
+  for path in args.images:
+    if not os.path.exists(path):
+      ValueError(f"{path} doesn't exist")
   logger.info(f"Loading the input files")
   images_data = [load_image(input_path) for input_path in args.images]
   images, bits_list = zip(*images_data)
@@ -891,22 +915,33 @@ def main():
   if args.average_exposure:
     logger.info(f"Adjusting input exposure to the mean")
     images = [adjust_exposure(image, mean_brightness) for image in images]
+  aligned_indices = set()
   if args.align in ["none", ""]:
     pass
   elif args.align in ["orb", "o"]:
     logger.info(f"Aligning images by ORB")
-    images = align_images_orb(images)
+    images = align_images_orb(images, aligned_indices)
   elif args.align in ["sift", "s"]:
     logger.info(f"Aligning images by SIFT")
-    images = align_images_sift(images)
+    images = align_images_sift(images, aligned_indices)
   elif args.align in ["ecc", "e"]:
     logger.info(f"Aligning images by ECC")
-    images = align_images_ecc(images)
+    images = align_images_ecc(images, aligned_indices)
   elif args.align in ["hugin", "h"]:
     logger.info(f"Aligning images by Hugin")
     images = align_images_hugin(images, args.images, bits_list)
   else:
     raise ValueError(f"Unknown align method")
+  if len(aligned_indices) > 0:
+    logger.debug(f"aligned indices: {sorted(list(aligned_indices))}")
+    if args.ignore_unaligned:
+      old_num = len(images)
+      images, bits_list, meta_list = zip(
+        *[(image, bits, meta)
+          for i, (image, bits, meta) in enumerate(zip(images, bits_list, meta_list))
+          if i in aligned_indices])
+      if len(images) != old_num:
+        logger.debug(f"{old_num - len(images)} of {old_num} images are removed")
   if args.video > 0:
     postprocess_video(args, images)
   else:
