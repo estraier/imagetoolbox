@@ -334,7 +334,7 @@ def align_images_orb(images):
       m, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
       if m is not None:
         log_homography_matrix(m)
-        aligned_image = cv2.warpPerspective(image, m, (w, h))
+        aligned_image = cv2.warpPerspective(image, m, (w, h), borderMode=cv2.BORDER_REPLICATE)
         aligned_images.append(aligned_image)
         corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
         transformed_corners = cv2.perspectiveTransform(corners, m)
@@ -380,24 +380,27 @@ def align_images_orb(images):
 
 
 def align_images_ecc(images):
-  """Aligns images using ECC."""
   if len(images) < 2:
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
   ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
+  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
     image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
     warp_matrix = np.eye(2, 3, dtype=np.float32)
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 1e-6)
     try:
       cc, warp_matrix = cv2.findTransformECC(
-        ref_gray, image_gray, warp_matrix, cv2.MOTION_AFFINE, criteria)
-      logger.debug(f"convergence: cc={cc}")
+        ref_gray, image_gray, warp_matrix, cv2.MOTION_AFFINE,
+        criteria, inputMask=None, gaussFiltSize=5)
+      logger.debug(f"homography matrix: {warp_matrix}")
       aligned_image = cv2.warpAffine(
-        image, warp_matrix, (w, h), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+        image, warp_matrix, (w, h), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP,
+        borderMode=cv2.BORDER_REPLICATE)
       aligned_images.append(aligned_image)
       corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
       transformed_corners = cv2.transform(corners, warp_matrix)
@@ -406,29 +409,25 @@ def align_images_ecc(images):
       x_max = np.max(transformed_corners[:, :, 0]).item()
       y_max = np.max(transformed_corners[:, :, 1]).item()
       bounding_boxes.append((int(x_min), int(y_min), int(x_max), int(y_max)))
-    except cv2.error as e:
-      logger.debug(f"alignment failed: {e}")
+    except cv2.error:
+      logger.debug("alignment failed")
       aligned_images.append(image)
   if bounding_boxes:
-    x_min = min(b[0] for b in bounding_boxes)
-    y_min = min(b[1] for b in bounding_boxes)
-    x_max = max(b[2] for b in bounding_boxes)
-    y_max = max(b[3] for b in bounding_boxes)
-    x_min = np.clip(x_min, 0, w)
-    y_min = np.clip(y_min, 0, h)
-    x_max = np.clip(x_max, 0, w)
-    y_max = np.clip(y_max, 0, h)
+    x_min = max(min(b[0] for b in bounding_boxes), 0)
+    y_min = max(min(b[1] for b in bounding_boxes), 0)
+    x_max = min(max(b[2] for b in bounding_boxes), w)
+    y_max = min(max(b[3] for b in bounding_boxes), h)
     crop_w = x_max - x_min
     crop_h = y_max - y_min
     aspect_ratio = w / h
     cropped_aspect_ratio = crop_w / crop_h
     if cropped_aspect_ratio > aspect_ratio * 1.01:
       new_crop_w = int(crop_h * aspect_ratio)
-      x_min = x_min + (crop_w - new_crop_w) // 2
+      x_min += (crop_w - new_crop_w) // 2
       x_max = x_min + new_crop_w
     elif cropped_aspect_ratio < aspect_ratio * 0.99:
       new_crop_h = int(crop_w / aspect_ratio)
-      y_min = y_min + (crop_h - new_crop_h) // 2
+      y_min += (crop_h - new_crop_h) // 2
       y_max = y_min + new_crop_h
     logger.debug(f"cropping: x_min={x_min}, y_min={y_min}, x_max={x_max}, y_max={y_max}")
     cropped_images = [img[y_min:y_max, x_min:x_max] for img in aligned_images]
@@ -471,7 +470,7 @@ def align_images_sift(images):
       m, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
       if m is not None:
         log_homography_matrix(m)
-        aligned_image = cv2.warpPerspective(image, m, (w, h))
+        aligned_image = cv2.warpPerspective(image, m, (w, h), borderMode=cv2.BORDER_REPLICATE)
         aligned_images.append(aligned_image)
         corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
         transformed_corners = cv2.perspectiveTransform(corners, m)
@@ -629,15 +628,13 @@ def merge_images_mertens(images):
 
 
 def stitch_images(images):
-  """Stitches images as a panorama photo."""
-  byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
-                 for image in images]
+  """Stitches images as a panorama photo and removes black margins."""
+  byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8) for image in images]
   stitcher = cv2.Stitcher_create()
   status, stitched_image = stitcher.stitch(byte_images)
   if status != cv2.Stitcher_OK:
-    raise ValueError(f"Stitching failed")
-  stitched_image = np.clip(stitched_image.astype(np.float32) / 255, 0, 1)
-  return stitched_image
+    raise ValueError(f"Stitching failed with status {status}")
+  return np.clip(stitched_image.astype(np.float32) / 255, 0, 1)
 
 
 def tone_map_image_linear(image):
@@ -665,6 +662,30 @@ def tone_map_image_mantiuk(image):
   tonemap = cv2.createTonemapMantiuk(gamma=1.0, scale=0.9, saturation=1.0)
   ldr = np.clip(tonemap.process(image), 0, 1)
   return ldr
+
+
+def fill_black_margin_image(image):
+  """Fills black margin on the sides with neighbor colors."""
+  padding = 10
+  image = cv2.copyMakeBorder(
+    image, padding, padding, padding, padding, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+  byte_image = (image * 255).astype(np.uint8)
+  gray_image = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
+  restore_mask = (gray_image > 0).astype(np.uint8) * 255
+  restore_mask = cv2.cvtColor(restore_mask, cv2.COLOR_GRAY2BGR).astype(np.bool)
+  h, w = gray_image.shape[:2]
+  mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+  flags = 4 | (255 << 8) | cv2.FLOODFILL_MASK_ONLY
+  cv2.floodFill(gray_image, mask, (1, 1), 255, loDiff=3, upDiff=3, flags=flags)
+  black_margin_mask = (mask[1:-1, 1:-1] == 255).astype(np.uint8) * 255
+  kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+  expanded_black_margin_mask = cv2.dilate(black_margin_mask, kernel, iterations=1)
+  inpainted_image = cv2.inpaint(byte_image, expanded_black_margin_mask, inpaintRadius=5,
+                                flags=cv2.INPAINT_TELEA)
+  inpainted_image = np.clip(inpainted_image.astype(np.float32) / 255, 0, 1)
+  restored = np.where(restore_mask, image, inpainted_image)
+  trimmed = restored[padding:-padding, padding:-padding]
+  return np.clip(trimmed, 0, 1)
 
 
 def trim_image(image, top, right, bottom, left):
@@ -804,14 +825,14 @@ def main():
                   " linear (default), reinhard, drago, mantiuk")
   ap.add_argument("--no-restore", "-nr", action='store_true',
                   help="do not apply auto restoration of brightness")
+  ap.add_argument("--fill-margin", "-fm", action='store_true',
+                  help="fill black marin with the color of nearest pixels")
   ap.add_argument("--slog", type=float, default=0, metavar="num",
                   help="scaled log brightness adjustment."
                   " positive to lighten, negative to darken")
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
-  ap.add_argument("--caption", default="", metavar="text",
-                  help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--blur", type=int, default=0, metavar="num",
                   help="apply Gaussian blur by the pixel radius.")
   ap.add_argument("--unsharp", type=int, default=0, metavar="num",
@@ -820,6 +841,8 @@ def main():
                   help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
   ap.add_argument("--scale", default="", metavar="numlist",
                   help="trim sides: WIDTH,HEIGHT in pixels eg. 1920,1080")
+  ap.add_argument("--caption", default="", metavar="text",
+                  help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--video", type=float, default=0, metavar="num",
                   help="output a video file with the FPS")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
@@ -948,6 +971,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   if not args.no_restore:
     logger.info(f"Applying auto restoration of brightness")
     merged_image = adjust_exposure(merged_image, mean_brightness)
+  if args.fill_margin:
+    logger.info(f"Filling the margin")
+    merged_image = fill_black_margin_image(merged_image)
   if args.slog > 0:
     logger.info(f"Lightening brightness")
     merged_image = lighten_image(merged_image, args.slog)

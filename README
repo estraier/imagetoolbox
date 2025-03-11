@@ -70,7 +70,7 @@ You can adjust brightness and contrast of the merged image manually.
 
 Stitching images as a panorama image is also supported.
 
-  $ itb_stack input*.jpg -o output.jpg --m s
+  $ itb_stack input*.jpg -o output.jpg --m s -nr -fm
 
 Yo can trim and scale the merged image.  For trimming, you set percentages for each edge like
 margin spec in CSS (top,right,bottom,left).  Fos scaling, you set both the width and height, or
