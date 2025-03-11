@@ -683,6 +683,7 @@ def fill_black_margin_image(image):
   inpainted_image = cv2.inpaint(byte_image, expanded_black_margin_mask, inpaintRadius=5,
                                 flags=cv2.INPAINT_TELEA)
   inpainted_image = np.clip(inpainted_image.astype(np.float32) / 255, 0, 1)
+  inpainted_image = cv2.GaussianBlur(inpainted_image, (5, 5), 0)
   restored = np.where(restore_mask, image, inpainted_image)
   trimmed = restored[padding:-padding, padding:-padding]
   return np.clip(trimmed, 0, 1)
