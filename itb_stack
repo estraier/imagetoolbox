@@ -294,7 +294,6 @@ def is_homography_valid(m, width, height):
     return False
   if abs(rotation) > rotation_allowance:
     return False
-  print("OK", dx, dy, scale_x, scale_y, width, height, rotation)
   return True
 
 
@@ -305,7 +304,7 @@ def log_homography_matrix(m):
   scale_x = np.sqrt(sx**2 + shear**2)
   scale_y = np.sqrt(sy**2 + shear_y**2)
   angle = np.arctan2(m[1, 0], m[0, 0]) * 180 / np.pi
-  logger.debug(f"warping: trran=({dx:.2f}, {dy:.2f}), "
+  logger.debug(f"warping: tran=({dx:.2f}, {dy:.2f}), "
                f"scale=({scale_x:.2f}, {scale_y:.2f}), angle={angle:.2f}°")
 
 
@@ -646,31 +645,35 @@ def merge_images_mertens(images):
   return hdr
 
 
+def z_score_normalization(image):
+  """Applies Z-score normalization to stabilize feature scaling."""
+  mean = np.mean(image)
+  std = np.std(image)
+  return (image - mean) / (std + 1e-6)
+
+
 def compute_sharpness(image):
-  """Computes edge strength by Laplacian filter."""
+  """Computes sharpness using normalized Laplacian and Sobel filters."""
   gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-  sharpness = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
+  blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+  laplacian = np.abs(cv2.Laplacian(blurred, cv2.CV_32F, ksize=3))
+  laplacian = z_score_normalization(laplacian)
+  sobel_x = np.abs(cv2.Sobel(blurred, cv2.CV_32F, 1, 0, ksize=3))
+  sobel_y = np.abs(cv2.Sobel(blurred, cv2.CV_32F, 0, 1, ksize=3))
+  sobel_e = np.sqrt(sobel_x**2 + sobel_y**2)
+  sobel = z_score_normalization(sobel_e)
+  sharpness = 0.6 * laplacian + 0.4 * sobel
   return sharpness
 
 
 def merge_images_focus_stacking(images):
-  """Merges images by focus stacking."""
+  """Merges images by focus stacking with direct indexing and Gaussian blur."""
   h, w, c = images[0].shape
-  sharpness_maps = np.array([compute_sharpness(img) for img in images])  # (N, H, W)
-  best_focus_index = np.argmax(sharpness_maps, axis=0)  # (H, W)
-  stacked_image = np.zeros_like(images[0])
-  final_mask = np.zeros((h, w), dtype=np.uint8)
-  for i in range(len(images)):
-    logger.debug(f"stacking the {i+1}/{len(images)} image")
-    mask = (best_focus_index == i).astype(np.uint8) * 255
-    cv2.copyTo(images[i], mask, stacked_image)
-    final_mask = np.maximum(final_mask, mask)
-  logger.debug("smoothing stitches")
-  refined_mask = cv2.dilate(final_mask, np.ones((5, 5), np.uint8), iterations=2)
-  blended_image = cv2.seamlessClone(
-    (stacked_image * 255).astype(np.uint8), (images[0] * 255).astype(np.uint8),
-    refined_mask, (w // 2, h // 2), cv2.NORMAL_CLONE)
-  return blended_image.astype(np.float32) / 255.0
+  sharpness_maps = np.array([compute_sharpness(img) for img in images])
+  best_focus_index = np.argmax(sharpness_maps, axis=0)
+  images_array = np.stack(images, axis=0)
+  stacked_image = images_array[best_focus_index, np.arange(h)[:, None], np.arange(w)]
+  return stacked_image
 
 
 def stitch_images(images):
