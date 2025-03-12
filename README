@@ -80,7 +80,7 @@ using ECC aligner is sometimes better than SIFT.
 
   $ itb_stack.py input*.jpg -o output.jpg -m f -nr -a e
 
-Stitching images as a panoramic image is also supported.
+Stitching images as a panoramic image is also supported.  "-fm" fills the black margin.
 
   $ itb_stack.py input*.jpg -o output.jpg -m s -nr -fm
 
@@ -112,10 +112,10 @@ of the video.  Supported formats are MP4 and MOV (.mp4 and .mov).
 The following merging methods are supported.
 
   - average (a) : average composition (default)
-  - weighted (w) : weighted average composition, suitable for pseudo-STF
   - median (mdn) : median composition, suitable for noise reduction
   - minimum (min) : minimum value composition, suitable for dynamic light sources
   - maximum (max) : maximum value composition, suitable for star trailing
+  - weighted (w) : weighted average composition, suitable for pseudo-STF
   - debevec (d) : Debevec's method, to create an HDR image, for a natural result
   - robertson (r) : Robertson's method, to create an HDR image, for the most recognizable shapes
   - mergens (m) : Mergen's method, to create a pseudo-HDR image by blending
@@ -150,5 +150,9 @@ most cases.
 To reduce the effect of camera shake during a bracketing shoot, utilizing an alignment method is
 recommended.  Usually SIFT is recommended as in the above examples.  However, each method has
 its pros and cons.  Thus, try different ones: SIFT, ORB, ECC, and Hugin in sequence.
+
+For unit testing, run the following command.
+
+  $ ./test_itb_stack.py
 
 == END OF FILE ==

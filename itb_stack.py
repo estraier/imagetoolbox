@@ -36,8 +36,8 @@ import exifread
 import numpy as np
 
 
-PROG_NAME = "itb_stack"
-PROG_VERSION = "0.0.1"
+PROG_NAME = "itb_stack.py"
+PROG_VERSION = "0.0.2"
 CMD_EXIFTOOL = "exiftool"
 CMD_HUGIN_ALIGN = "align_image_stack"
 
@@ -101,6 +101,24 @@ def save_image(file_path, image, bits):
   success = cv2.imwrite(file_path, image)
   if not success:
     raise ValueError(f"Failed to save image: {file_path}")
+
+
+def save_video(file_path, images, fps):
+  """Saves a video of images."""
+  logger.debug(f"saving {file_path}")
+  h, w = images[0].shape[:2]
+  ext = os.path.splitext(file_path)[-1].lower()
+  if ext not in [".mp4", ".mov"]:
+    raise ValueError(f"Unsupported file format: {ext}")
+  codec = cv2.VideoWriter_fourcc(*"mp4v")
+  out = cv2.VideoWriter(file_path, codec, fps, (w, h))
+  for image in images:
+    if image.shape[:2] != (h, w):
+      image = crop_to_match(image, (h, w))
+    srgb_image = linear_to_srgb(image)
+    uint8_image = (srgb_image * 255).astype(np.uint8)
+    out.write(uint8_image)
+  out.release()
 
 
 def parse_numeric(text):
@@ -703,7 +721,7 @@ def merge_images_focus_stacking(images, smoothness=0.5):
   return np.clip(stacked_image, 0, 1)
 
 
-def stitch_images(images):
+def merge_images_stitch(images):
   """Stitches images as a panoramic photo and removes black margins."""
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8) for image in images]
   stitcher = cv2.Stitcher_create()
@@ -797,7 +815,7 @@ def scale_image(image, width, height):
   return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
 
 
-def write_caption(capexpr, image):
+def write_caption(image, capexpr):
   """Write a text on an image."""
   h, w = image.shape[:2]
   fields = capexpr.split("|")
@@ -878,6 +896,11 @@ def parse_scale_expression(expression):
   return w, h
 
 
+def set_logging_level(level):
+  """Sets the logging level."""
+  logger.setLevel(level)
+
+
 def main():
   """Execute all operations."""
   description = "Stack and combine images."
@@ -930,7 +953,7 @@ def main():
   args = ap.parse_args()
   start_time = time.time()
   if args.debug:
-    logger.setLevel(logging.DEBUG)
+    set_logging_level(logging.DEBUG)
   logger.debug(f"{PROG_NAME}={PROG_VERSION},"
                f" OpenCV={cv2.__version__}, NumPy={np.__version__}")
   logger.info(f"Process started: input={args.images}, output={args.output}")
@@ -984,21 +1007,8 @@ def main():
 
 def postprocess_video(args, images):
   """Postprocess images as a video."""
-  fps = args.video
-  h, w = images[0].shape[:2]
-  ext = args.output.split(".")[-1].lower()
-  if ext not in ["mp4", "mov"]:
-    raise ValueError(f"Unsupported file format: {ext}")
-  codec = cv2.VideoWriter_fourcc(*"mp4v")
   logger.info(f"Saving the output file as a video")
-  out = cv2.VideoWriter(args.output, codec, fps, (w, h))
-  for image in images:
-    if image.shape[:2] != (h, w):
-      image = crop_to_match(image, (h, w))
-    srgb_image = linear_to_srgb(image)
-    uint8_image = (srgb_image * 255).astype(np.uint8)
-    out.write(uint8_image)
-  out.release()
+  save_video(args.output, images, args.video)
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
     copy_metadata(args.images[0], args.output)
@@ -1048,7 +1058,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     merged_image = merge_images_focus_stacking(images)
   elif args.merge in ["stitch", "s"]:
     logger.info(f"Stitching images as a panoramic photo")
-    merged_image = stitch_images(images)
+    merged_image = merge_images_stitch(images)
   else:
     raise ValueError(f"Unknown merge method")
   if is_hdr:
@@ -1103,7 +1113,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     merged_image = scale_image(merged_image, *scale_params)
   if len(args.caption) > 0:
     logger.info(f"Writing the caption")
-    merged_image = write_caption(args.caption, merged_image)
+    merged_image = write_caption(merged_image, args.caption)
   logger.info(f"Saving the output file as an image")
   save_image(args.output, merged_image, bits_list[0])
   if has_command(CMD_EXIFTOOL):
