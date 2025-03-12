@@ -704,7 +704,7 @@ def merge_images_focus_stacking(images, smoothness=0.5):
 
 
 def stitch_images(images):
-  """Stitches images as a panorama photo and removes black margins."""
+  """Stitches images as a panoramic photo and removes black margins."""
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8) for image in images]
   stitcher = cv2.Stitcher_create()
   status, stitched_image = stitcher.stitch(byte_images)
@@ -1047,7 +1047,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     logger.info(f"Merging images by focus stacking")
     merged_image = merge_images_focus_stacking(images)
   elif args.merge in ["stitch", "s"]:
-    logger.info(f"Stitching images as a panorama photo")
+    logger.info(f"Stitching images as a panoramic photo")
     merged_image = stitch_images(images)
   else:
     raise ValueError(f"Unknown merge method")
