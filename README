@@ -22,7 +22,7 @@ Optionally, those tools can be executed implicitly.
 
 ----------------
 
-itb_stack : Stack and merge images into one.
+itb_stack.py : Stack and merge images into one.
 
 This command is useful to create pseudo-STF images and HDR images.
 
@@ -30,76 +30,76 @@ For pseudo-STF (smooth transfer focus), take multiple images with various apertu
 use aperture bracketing or do it manually, simply input the images.  They are stacked and merged
 into an image by weighted average composition.
 
-  $ itb_stack input*.jpg -o output.jpg
+  $ itb_stack.py input*.jpg -o output.jpg
 
 In fact, weighted average composition is more suitable for pseudo-STF.  The weight of each image
 is calculated as the radius of the circle of confusion.  It means that images taken with wider
 aperture contribute more to the final image.
 
-  $ itb_stack input*.jpg -o output.jpg -m w
+  $ itb_stack.py input*.jpg -o output.jpg -m w
 
 Most cameras support exposure bracketing.  If you use it on the S mode with a fixed ISO, images
 are taken with various apertures but exposure is different.  Then, set -ax option, which adjusts
 exposure of each input image before merging.
   
-  $ itb_stack input*.jpg -o output.jpg -ax -m w
+  $ itb_stack.py input*.jpg -o output.jpg -ax -m w
 
 If bracketing is done handheld without a tripod, pictures will be shifted a little, which
 causes blur after merging.  In that case, aligning input images is useful.  In most cases, the
 SIFT aligner is the best option.
 
-  $ itb_stack input*.jpg -o output.jpg -ax -m w -a s
+  $ itb_stack.py input*.jpg -o output.jpg -ax -m w -a s
 
 To create an HDR (high dynamic range) image from images taken by exposure bracketing, run the
 following command.  It merges input images by Debevec's method and applies tone mapping by
 Reinhard's method.
 
-  $ itb_stack input*.jpg -o output.jpg -m d -t r
+  $ itb_stack.py input*.jpg -o output.jpg -m d -t r
 
 Alignment is also useful for creating HDR images of handheld pictures.
 
-  $ itb_stack input*.jpg -o output.jpg -m d -t r -a s
+  $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a s
 
 By default, brightness of the merged image is calibrated to match the average brightness of the
 input images.  If you calibrate brightness yourself, suppress it.
 
-  $ itb_stack input*.jpg -o output.jpg -nr
+  $ itb_stack.py input*.jpg -o output.jpg -nr
 
 You can adjust brightness and contrast of the merged image manually.
 
-  $ itb_stack input*.jpg -o output.jpg --slog 1.3 --sigmoid 2.4
+  $ itb_stack.py input*.jpg -o output.jpg --slog 1.3 --sigmoid 2.4
 
 Merging multiple pictures taken with high sensitivity is effective in suppressing noise.  If the
 number of pictures is less than 20, use median instead of average.  Moreover, ignoring unaligned
 images from merging is a practical solution against failures of aligning pictures.
 
-  $ itb_stack input*.jpg -o output.jpg -m median -a s -iu
+  $ itb_stack.py input*.jpg -o output.jpg -m median -a s -iu
 
 Focus stacking of images taken with different focus distance is also supported.  In this case,
 using ECC aligner is sometimes better than SIFT.
 
-  $ itb_stack input*.jpg -o output.jpg -m f -nr -a e
+  $ itb_stack.py input*.jpg -o output.jpg -m f -nr -a e
 
 Stitching images as a panoramic image is also supported.
 
-  $ itb_stack input*.jpg -o output.jpg -m s -nr -fm
+  $ itb_stack.py input*.jpg -o output.jpg -m s -nr -fm
 
 You can trim and scale the merged image.  For trimming, you set percentages for each edge like
 margin spec in CSS (top,right,bottom,left).  For scaling, you set both the width and height, or
 just the longer side of the new image.
 
-  $ itb_stack input*.jpg -o output.jpg --trim "30,20,30,20" --trim "1920,1080"
-  $ itb_stack input*.jpg -o output.jpg --trim "30,20" --trim "1920"
+  $ itb_stack.py input*.jpg -o output.jpg --trim "30,20,30,20" --trim "1920,1080"
+  $ itb_stack.py input*.jpg -o output.jpg --trim "30,20" --trim "1920"
 
 You can put a caption on the merged image.  By default, the font size is 20% of sqrt(area); the
 font color is white; the position is center.
 
-  $ itb_stack input*.jpg -o output.jpg --caption "hello"
+  $ itb_stack.py input*.jpg -o output.jpg --caption "hello"
 
 You can change the size, color, and position.  The following sets the size 0.5, the color #ff0,
 and the position bottom-left.
 
-  $ itb_stack input*.jpg -o output.jpg --caption "hello|0.5|ff0|bl"
+  $ itb_stack.py input*.jpg -o output.jpg --caption "hello|0.5|ff0|bl"
 
 If "exiftool" command is available on your system, EXIF metadata and ICC profile of the first
 input image are preserved in the merged image.
@@ -107,7 +107,7 @@ input image are preserved in the merged image.
 You can generate a video file from the input images.  You must specify the FPS (frames per second)
 of the video.  Supported formats are MP4 and MOV (.mp4 and .mov).
 
-  $ itb_stack input*.jpg -o output.mp4 --video 0.5
+  $ itb_stack.py input*.jpg -o output.mp4 --video 0.5
 
 The following merging methods are supported.
 
@@ -140,12 +140,12 @@ The following aligning methods are supported.
 In summary, to create a pseudo-STF image, averaging exposure and weighted average composition
 produces the best results in most cases.
 
-  $ itb_stack input*.jpg -o output.jpg -ax -m w -a s
+  $ itb_stack.py input*.jpg -o output.jpg -ax -m w -a s
 
 To create an HDR image, combining the Debevec and Robertson methods produces the best results in
 most cases.
 
-  $ itb_stack input*.jpg -o output.jpg -m d -t r -a s
+  $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a s
 
 To reduce the effect of camera shake during a bracketing shoot, utilizing an alignment method is
 recommended.  Usually SIFT is recommended as in the above examples.  However, each method has
