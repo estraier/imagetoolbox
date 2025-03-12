@@ -217,6 +217,24 @@ def inverse_sigmoidal_contrast_image(image, gain, mid):
   return np.clip((naive_inverse_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
 
 
+def bilateral_denoise_image(image, radius):
+  """Applies bilateral denoise."""
+  ksize = math.ceil(2 * radius) + 1
+  if ksize <= 5:
+    sigma_color = 25
+    sigma_space = 25
+  elif ksize <= 7:
+    sigma_color = 50
+    sigma_space = 50
+  elif ksize <= 9:
+    sigma_color = 75
+    sigma_space = 75
+  else:
+    sigma_color = 15
+    sigma_space = 150
+  return cv2.bilateralFilter(image, ksize, sigma_color, sigma_space)
+
+
 def gaussian_blur_image(image, radius):
   """Applies Gaussian blur."""
   ksize = math.ceil(2 * radius) + 1
@@ -894,6 +912,8 @@ def main():
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
+  ap.add_argument("--denoise", type=int, default=0, metavar="num",
+                  help="apply bilateral denoise by the pixel radius.")
   ap.add_argument("--blur", type=int, default=0, metavar="num",
                   help="apply Gaussian blur by the pixel radius.")
   ap.add_argument("--unsharp", type=int, default=0, metavar="num",
@@ -1064,6 +1084,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif args.sigmoid < 0:
     logger.info(f"Weakening the contrast")
     merged_image = inverse_sigmoidal_contrast_image(merged_image, -args.sigmoid, 0.5)
+  if args.denoise > 0:
+    logger.info(f"Applying birateral denoise")
+    merged_image = bilateral_denoise_image(merged_image, args.denoise)
   if args.blur > 0:
     logger.info(f"Applying Gaussian blur")
     merged_image = gaussian_blur_image(merged_image, args.blur)
