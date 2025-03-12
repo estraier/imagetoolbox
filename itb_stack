@@ -663,17 +663,26 @@ def compute_sharpness(image):
   sobel_e = np.sqrt(sobel_x**2 + sobel_y**2)
   sobel = z_score_normalization(sobel_e)
   sharpness = 0.6 * laplacian + 0.4 * sobel
+  sharpness = np.clip(sharpness, -10, 10)
   return sharpness
 
 
-def merge_images_focus_stacking(images):
+def merge_images_focus_stacking(images, smoothness=0.5):
   """Merges images by focus stacking with direct indexing and Gaussian blur."""
   h, w, c = images[0].shape
   sharpness_maps = np.array([compute_sharpness(img) for img in images])
-  best_focus_index = np.argmax(sharpness_maps, axis=0)
   images_array = np.stack(images, axis=0)
-  stacked_image = images_array[best_focus_index, np.arange(h)[:, None], np.arange(w)]
-  return stacked_image
+  if smoothness <= 0:
+    best_focus_index = np.argmax(sharpness_maps, axis=0)
+    stacked_image = images_array[best_focus_index, np.arange(h)[:, None], np.arange(w)]
+    return stacked_image
+  weights = sharpness_maps.copy()
+  weights -= np.max(weights, axis=0, keepdims=True)
+  tau = max(np.std(weights) * smoothness, 1e-4)
+  weights = np.exp(weights / tau)
+  weights = weights / (np.sum(weights, axis=0, keepdims=True) + 1e-8)
+  stacked_image = np.sum(weights[..., np.newaxis] * images_array, axis=0)
+  return np.clip(stacked_image, 0, 1)
 
 
 def stitch_images(images):
@@ -960,9 +969,9 @@ def postprocess_video(args, images):
   ext = args.output.split(".")[-1].lower()
   if ext not in ["mp4", "mov"]:
     raise ValueError(f"Unsupported file format: {ext}")
-  cc = cv2.VideoWriter_fourcc(*"mp4v")  # MOV codec
+  codec = cv2.VideoWriter_fourcc(*"mp4v")
   logger.info(f"Saving the output file as a video")
-  out = cv2.VideoWriter(args.output, cc, fps, (w, h))
+  out = cv2.VideoWriter(args.output, codec, fps, (w, h))
   for image in images:
     if image.shape[:2] != (h, w):
       image = crop_to_match(image, (h, w))

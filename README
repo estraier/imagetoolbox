@@ -104,7 +104,7 @@ and the position bottom-left.
 If "exiftool" command is available on your system, EXIF metadata and ICC profile of the first
 input image is conveyed to the merged image.
 
-You can make a video file from the input images, you specify the FPS (frame per second) of the
+You can make a video file from the input images, you specify the FPS (frames per second) of the
 video.  Supported formats are MP4 and MOV (.mp4 and .mov).
 
   $ itb_stack input*.jpg -o output.mp4 --video 0.5
