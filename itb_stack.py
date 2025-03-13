@@ -719,7 +719,7 @@ def merge_images_laplacian_pyramids(images, weights, pyramid_levels):
   return stacked_image
 
 
-def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=7):
+def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
   """Merges images by focus stacking."""
   h, w, c = images[0].shape
   pyramid_levels = min(pyramid_levels, int(math.log2(min(h, w))) - 3)
