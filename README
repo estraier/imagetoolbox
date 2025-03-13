@@ -29,7 +29,7 @@ images, panoramic images, and videos.
 
 For pseudo-STF (smooth transfer focus), take multiple images with various apertures.  If you can
 use aperture bracketing or do it manually, simply input the images.  They are stacked and merged
-into an image by weighted average composition.
+into an image by average composition.
 
   $ itb_stack.py input*.jpg -o output.jpg
 
