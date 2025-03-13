@@ -52,9 +52,10 @@ def generate_test_image(width=1000, height=1000, shift=(0, 0)):
     for y in range(0, height, height // 20):
       sx = x + shift[0]
       sy = y + shift[1]
-      cv2.circle(image, (sx, sy), width // 50, (n1 % 256, n2 % 256, (n1 + n2) % 256), width // 100)
-      n1 += 16
-      n2 += 8
+      th = (n1 + n2) % width // 200 + 1
+      cv2.circle(image, (sx, sy), width // 50, (n1 % 256, n2 % 256, (n1 + n2) % 256), th)
+      n1 += 48
+      n2 += 24
   return image.astype(np.float32) / 255
 
 
