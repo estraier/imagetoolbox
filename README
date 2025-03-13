@@ -25,7 +25,7 @@ Optionally, those tools can be executed implicitly.
 itb_stack.py : Stack and merge images into one.
 
 This command is useful to create pseudo-STF images, HDR images, less-noise images, focus-stacked
-images, and panoramic images.
+images, panoramic images, and videos.
 
 For pseudo-STF (smooth transfer focus), take multiple images with various apertures.  If you can
 use aperture bracketing or do it manually, simply input the images.  They are stacked and merged
