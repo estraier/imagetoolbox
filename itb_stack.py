@@ -719,10 +719,10 @@ def merge_images_laplacian_pyramids(images, weights, pyramid_levels):
   return stacked_image
 
 
-def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=5):
+def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=7):
   """Merges images by focus stacking."""
   h, w, c = images[0].shape
-  pyramid_levels = min(pyramid_levels, math.log2(min(h, w)) - 4)
+  pyramid_levels = min(pyramid_levels, int(math.log2(min(h, w))) - 3)
   sharpness_maps = np.array([compute_sharpness(img) for img in images])
   images_array = np.stack(images, axis=0)
   if smoothness <= 0:
@@ -734,21 +734,23 @@ def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=5):
   tau = max(np.std(weights) * smoothness, 1e-4)
   weights = np.exp(weights / tau)
   weights = weights / (np.sum(weights, axis=0, keepdims=True) + 1e-8)
-  stacked_image = np.sum(weights[..., np.newaxis] * images_array, axis=0)
   if pyramid_levels <= 1 or min(h, w) < 256:
+    stacked_image = np.sum(weights[..., np.newaxis] * images_array, axis=0)
     return np.clip(stacked_image, 0, 1)
   factor = 2 ** pyramid_levels
-  new_h = (h // factor) * factor
-  new_w = (w // factor) * factor
-  y_offset = (h - new_h) // 2
-  x_offset = (w - new_w) // 2
-  cropped_images = np.array([x[y_offset:y_offset + new_h, x_offset:x_offset + new_w]
-                             for x in images])
-  cropped_weights = np.array([x[y_offset:y_offset + new_h, x_offset:x_offset + new_w]
-                              for x in weights])
-  cropped_stacked = merge_images_laplacian_pyramids(
-    cropped_images, cropped_weights, pyramid_levels)
-  stacked_image[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = cropped_stacked
+  new_h = ((h + factor - 1) // factor) * factor
+  new_w = ((w + factor - 1) // factor) * factor
+  expanded_images = np.array([
+    cv2.copyMakeBorder(img, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+    for img in images
+  ])
+  expanded_weights = np.array([
+    cv2.copyMakeBorder(wt, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+    for wt in weights
+  ])
+  expanded_stacked = merge_images_laplacian_pyramids(
+    expanded_images, expanded_weights, pyramid_levels)
+  stacked_image = expanded_stacked[:h, :w]
   return np.clip(stacked_image, 0, 1)
 
 
