@@ -722,7 +722,7 @@ def merge_images_laplacian_pyramids(images, weights, pyramid_levels):
 def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=5):
   """Merges images by focus stacking."""
   h, w, c = images[0].shape
-  pyramid_levels = min(pyramid_levels, math.log2(min(h, w)) - 3)
+  pyramid_levels = min(pyramid_levels, math.log2(min(h, w)) - 4)
   sharpness_maps = np.array([compute_sharpness(img) for img in images])
   images_array = np.stack(images, axis=0)
   if smoothness <= 0:
