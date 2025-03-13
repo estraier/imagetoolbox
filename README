@@ -149,6 +149,12 @@ most cases.
 
   $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a s
 
+The focus stacking algorithm uses softmax of local contrast for composition weight.  It is an
+interesting fact that this algorithm is useful to create HDR images.  Averaging exposure and
+applying focus stacking produces contrasty and natural images.
+
+  $ itb_stack.py input*.jpg -o output.jpg -ax -m f -a s
+
 To reduce the effect of camera shake during a bracketing shoot, utilizing an alignment method is
 recommended.  Usually SIFT is recommended as in the above examples.  However, each method has
 its pros and cons.  Thus, try different ones: SIFT, ORB, ECC, and Hugin in sequence.
