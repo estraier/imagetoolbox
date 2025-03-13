@@ -15,7 +15,7 @@ import cv2
 
 from itb_stack import (
   set_logging_level,
-  load_image, save_image, save_video,
+  load_image, save_image, load_video, save_video,
   compute_brightness,
   lighten_image, darken_image, sigmoidal_contrast_image, inverse_sigmoidal_contrast_image,
   adjust_exposure,
@@ -90,19 +90,19 @@ class TestItbStack(unittest.TestCase):
 
   @patch("cv2.imread", return_value=generate_test_image())
   def test_load_image_mock(self, mock_imread):
-    image, bits = load_image("test_input.jpg")
+    image, bits = load_image("test_image.jpg")
     self.assertEqual(image.shape, (1000, 1000, 3))
     self.assertIn(bits, [8, 16, 32])
 
   @patch("cv2.imwrite", return_value=True)
   def test_save_image_mock(self, mock_imwrite):
     image = generate_test_image()
-    save_image("test_output.jpg", image, 8)
+    save_image("test_image.jpg", image, 8)
     mock_imwrite.assert_called_once()
 
   def test_save_and_load_image_jpeg(self):
     image = generate_test_image()
-    path = os.path.join(self.temp_path, "test_output.jpg")
+    path = os.path.join(self.temp_path, "test_image.jpg")
     save_image(path, image, 8)
     loaded_image, bits = load_image(path)
     self.assertEqual(image.shape, loaded_image.shape)
@@ -110,16 +110,34 @@ class TestItbStack(unittest.TestCase):
 
   def test_save_and_load_image_tiff(self):
     image = generate_test_image()
-    path = os.path.join(self.temp_path, "test_output.tif")
+    path = os.path.join(self.temp_path, "test_image.tif")
     save_image(path, image, 16)
     loaded_image, bits = load_image(path)
     self.assertEqual(image.shape, loaded_image.shape)
-    self.assertEqual(bits, 16)
+
+  @patch("cv2.VideoCapture")
+  def test_load_video_mock(self, mock_video_capture):
+    mock_cap = MagicMock()
+    mock_video_capture.return_value = mock_cap
+    mock_cap.isOpened.return_value = True
+    mock_cap.get.side_effect = lambda x: {
+      cv2.CAP_PROP_FPS: 10,
+      cv2.CAP_PROP_FRAME_COUNT: 30
+    }.get(x, None)
+    fake_frame = np.ones((100, 100, 3), dtype=np.uint8) * 255
+    mock_cap.read.side_effect = [(True, fake_frame)] * 30 + [(False, None)]
+    frames = load_video("test_video.mp4", mem_allowance=1<<30, input_fps=5)
+    self.assertEqual(len(frames), 15)
+    self.assertTrue(all(isinstance(f[0], np.ndarray) for f in frames))
+    self.assertEqual(frames[0][0].shape, (100, 100, 3))
+    self.assertEqual(frames[0][1], 8)
+    mock_video_capture.assert_called_once_with("test_video.mp4")
+    mock_cap.release.assert_called_once()
 
   @patch("cv2.VideoWriter")
   def test_save_video_mock(self, mock_video_writer):
     images = [generate_test_image() for _ in range(3)]
-    path = os.path.join(self.temp_path, "test_output.mp4")
+    path = os.path.join(self.temp_path, "test_video.mp4")
     mock_writer_instance = mock_video_writer.return_value
     save_video(path, images, 1)
     mock_video_writer.assert_called_once_with(
@@ -127,10 +145,15 @@ class TestItbStack(unittest.TestCase):
     self.assertEqual(mock_writer_instance.write.call_count, len(images))
     mock_writer_instance.release.assert_called_once()
 
-  def test_save_video(self):
+  def test_save_and_load_video(self):
     images = [generate_test_image() for _ in range(3)]
-    path = os.path.join(self.temp_path, "test_output.mp4")
+    path = os.path.join(self.temp_path, "test_video.mp4")
     save_video(path, images, 1)
+    image_data = load_video(path, 2 * (1<<30), 0)
+    self.assertEqual(len(image_data), 3)
+    for image, bits in image_data:
+      self.assertEqual(bits, 8)
+      self.assertEqual(image.shape, images[0].shape)
 
   def test_compute_brightness(self):
     image = generate_test_image()

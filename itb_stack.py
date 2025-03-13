@@ -40,6 +40,8 @@ PROG_NAME = "itb_stack.py"
 PROG_VERSION = "0.0.2"
 CMD_EXIFTOOL = "exiftool"
 CMD_HUGIN_ALIGN = "align_image_stack"
+EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif"]
+EXTS_VIDEO = [".mp4", ".mov"]
 
 
 logging.basicConfig(format="%(message)s", stream=sys.stderr)
@@ -57,12 +59,8 @@ def has_command(name):
   return bool(shutil.which(name))
 
 
-def load_image(file_path):
-  """Loads an image and return its linear RGB data as a NumPy array."""
-  logger.debug(f"loading {file_path}")
-  image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-  if image is None:
-    raise ValueError(f"Failed to load {file_path}")
+def normalize_input_image(image):
+  """Normalizes the input image as linear RGB data in BGR space."""
   if image.dtype == np.uint32:
     image = image.astype(np.float32) / float((1<<32) - 1)
     bits = 32
@@ -76,15 +74,25 @@ def load_image(file_path):
     image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
   elif image.shape[2] == 4:
     image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+  image = srgb_to_linear(image)
+  return image, bits
+
+
+def load_image(file_path):
+  """Loads an image and returns its linear RGB data as a NumPy array."""
+  logger.debug(f"loading image: {file_path}")
+  image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+  if image is None:
+    raise ValueError(f"Failed to load image: {file_path}")
+  image, bits = normalize_input_image(image)
   h, w = image.shape[:2]
   logger.debug(f"h={h}, w={w}, area={h*w}, bits={bits}")
-  image = srgb_to_linear(image)
   return image, bits
 
 
 def save_image(file_path, image, bits):
   """Saves an image after converting it from linear RGB to sRGB."""
-  logger.debug(f"saving {file_path}")
+  logger.debug(f"saving image: {file_path}")
   image = linear_to_srgb(image)
   ext = os.path.splitext(file_path)[1].lower()
   if ext in [".jpg", ".jpeg"]:
@@ -103,15 +111,59 @@ def save_image(file_path, image, bits):
     raise ValueError(f"Failed to save image: {file_path}")
 
 
-def save_video(file_path, images, fps):
+def load_video(file_path, mem_allowance, input_fps):
+  """Loads images and returns their linear RGB data as a tuple of a NumPy array."""
+  logger.debug(f"loading video: {file_path}")
+  cap = cv2.VideoCapture(file_path)
+  if not cap.isOpened():
+    raise ValueError(f"Failed to open video: {file_path}")
+  fps = cap.get(cv2.CAP_PROP_FPS)  # Frames per second
+  total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+  duration = total_frames / fps  # Total video duration in seconds
+  logger.debug(f"fps={fps}, frames={total_frames}, duration={duration:.2f}")
+  frames = []
+  total_mem_usage = 0
+  if input_fps > 0:
+    interval = 1 / input_fps
+    current_time = 0.0
+    while current_time < duration:
+      cap.set(cv2.CAP_PROP_POS_MSEC, current_time * 1000)
+      ret, frame = cap.read()
+      if not ret:
+        break  # End of video
+      frame, bits = normalize_input_image(frame)
+      frame_mem_size = estimate_image_memory_size(frame)
+      if total_mem_usage + frame_mem_size > mem_allowance:
+        logger.warning(f"Memory limit reached while processing")
+        break
+      frames.append((frame, bits))
+      total_mem_usage += frame_mem_size
+      current_time += interval
+  else:
+    while True:
+      ret, frame = cap.read()
+      if not ret:
+        break
+      frame, bits = normalize_input_image(frame)
+      frame_mem_size = estimate_image_memory_size(frame)
+      if total_mem_usage + frame_mem_size > mem_allowance:
+        logger.warning(f"Memory limit reached while processing")
+        break
+      frames.append((frame, bits))
+      total_mem_usage += frame_mem_size
+  cap.release()
+  return frames
+
+
+def save_video(file_path, images, output_fps):
   """Saves a video of images."""
-  logger.debug(f"saving {file_path}")
+  logger.debug(f"saving video: {file_path}")
   h, w = images[0].shape[:2]
   ext = os.path.splitext(file_path)[-1].lower()
-  if ext not in [".mp4", ".mov"]:
+  if ext not in EXTS_VIDEO:
     raise ValueError(f"Unsupported file format: {ext}")
   codec = cv2.VideoWriter_fourcc(*"mp4v")
-  out = cv2.VideoWriter(file_path, codec, fps, (w, h))
+  out = cv2.VideoWriter(file_path, codec, output_fps, (w, h))
   for image in images:
     if image.shape[:2] != (h, w):
       image = crop_to_match(image, (h, w))
@@ -119,6 +171,14 @@ def save_video(file_path, images, fps):
     uint8_image = (srgb_image * 255).astype(np.uint8)
     out.write(uint8_image)
   out.release()
+
+
+def estimate_image_memory_size(image):
+  """Estimates memory size of an image."""
+  height, width = image.shape[:2]
+  channels = 3
+  depth = 4
+  return width * height * channels * depth
 
 
 def parse_numeric(text):
@@ -538,6 +598,8 @@ def align_images_hugin(images, input_paths, bits_list):
   align_input_paths = []
   for image, input_path, bits in zip(images, input_paths, bits_list):
     ext = os.path.splitext(input_path)[1].lower()
+    if ext not in EXTS_IMAGE:
+      raise ValueError(f"Unsupported file format: {ext}")
     align_input_path = f"{full_prefix}-input-{len(align_input_paths)+1:04d}{ext}"
     align_input_paths.append(align_input_path)
     save_image(align_input_path, image, bits)
@@ -1040,9 +1102,9 @@ def main():
   ap = argparse.ArgumentParser(
     prog=PROG_NAME, description=description, epilog=epilog,
     formatter_class=argparse.RawDescriptionHelpFormatter, allow_abbrev=False)
-  ap.add_argument("images", nargs='+', help="input image paths")
-  ap.add_argument("--output", "-o", default="output.tif", metavar="path",
-                  help="output image path (dafault=output.tif)")
+  ap.add_argument("inputs", nargs='+', help="input image paths")
+  ap.add_argument("--output", "-o", default="output.jpg", metavar="path",
+                  help="output image path (dafault=output.jpg)")
   ap.add_argument("--average-exposure", "-ax", action='store_true',
                   help="average input exposure")
   ap.add_argument("--align", "-a", default="none", metavar="name",
@@ -1082,8 +1144,12 @@ def main():
                   help="scale change: WIDTH,HEIGHT in pixels eg. 1920,1080")
   ap.add_argument("--caption", default="", metavar="text",
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
-  ap.add_argument("--video", type=float, default=0, metavar="num",
+  ap.add_argument("--input-video-fps", type=float, default=1, metavar="num",
+                  help="input video files with the FPS")
+  ap.add_argument("--output-video-fps", type=float, default=1, metavar="num",
                   help="output a video file with the FPS")
+  ap.add_argument("--max-memory-usage", type=float, default=2, metavar="num",
+                  help="maximum memory usage in GiB")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   args = ap.parse_args()
   start_time = time.time()
@@ -1091,14 +1157,14 @@ def main():
     set_logging_level(logging.DEBUG)
   logger.debug(f"{PROG_NAME}={PROG_VERSION},"
                f" OpenCV={cv2.__version__}, NumPy={np.__version__}")
-  logger.info(f"Process started: input={args.images}, output={args.output}")
-  for path in args.images:
+  logger.info(f"Process started: input={args.inputs}, output={args.output}")
+  for path in args.inputs:
     if not os.path.exists(path):
       ValueError(f"{path} doesn't exist")
   logger.info(f"Loading the input files")
-  images_data = [load_image(input_path) for input_path in args.images]
+  images_data = load_input_images(args)
   images, bits_list = zip(*images_data)
-  meta_list = [get_metadata(input_path) for input_path in args.images]
+  meta_list = [get_metadata(input_path) for input_path in args.inputs]
   brightness_values = np.array([compute_brightness(image) for image in images])
   mean_brightness = np.mean(brightness_values)
   logger.debug(f"mean_brightness={mean_brightness:.3f}")
@@ -1119,7 +1185,7 @@ def main():
     images = align_images_ecc(images, aligned_indices)
   elif args.align in ["hugin", "h"]:
     logger.info(f"Aligning images by Hugin")
-    images = align_images_hugin(images, args.images, bits_list)
+    images = align_images_hugin(images, args.inputs, bits_list)
   else:
     raise ValueError(f"Unknown align method")
   if len(aligned_indices) > 0:
@@ -1132,21 +1198,50 @@ def main():
           if i in aligned_indices])
       if len(images) != old_num:
         logger.debug(f"{old_num - len(images)} of {old_num} images are removed")
-  if args.video > 0:
+  ext = os.path.splitext(args.output)[1].lower()
+  if ext in EXTS_VIDEO:
     postprocess_video(args, images)
-  else:
+  elif ext in EXTS_IMAGE:
     postprocess_images(args, images, bits_list, meta_list, mean_brightness)
+  else:
+    raise ValueError(f"Unsupported file format: {ext}")
   elapsed_time = time.time() - start_time
   logger.info(f"Process done: time={elapsed_time:.2f}s")
+
+
+def load_input_images(args):
+  """Loads input images."""
+  limit_mem_size = args.max_memory_usage * (1<<30)
+  total_mem_size = 0
+  images_data = []
+  for input_path in args.inputs:
+    ext = os.path.splitext(input_path)[1].lower()
+    mem_allowance = limit_mem_size - total_mem_size
+    if ext in EXTS_VIDEO:
+      video_image_data = load_video(input_path, mem_allowance, args.input_video_fps)
+      for image, bits in video_image_data:
+        total_mem_size += estimate_image_memory_size(image)
+        if total_mem_size > limit_mem_size:
+          raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
+        images_data.append((image, bits))
+    elif ext in EXTS_IMAGE:
+      image, bits = load_image(input_path)
+      total_mem_size += estimate_image_memory_size(image)
+      if total_mem_size > limit_mem_size:
+        raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
+      images_data.append((image, bits))
+    else:
+      raise ValueError(f"Unsupported file format: {ext}")
+  return images_data
 
 
 def postprocess_video(args, images):
   """Postprocess images as a video."""
   logger.info(f"Saving the output file as a video")
-  save_video(args.output, images, args.video)
+  save_video(args.output, images, args.output_video_fps)
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
-    copy_metadata(args.images[0], args.output)
+    copy_metadata(args.inputs[0], args.output)
 
 
 def crop_to_match(image, target_size):
@@ -1277,7 +1372,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   save_image(args.output, merged_image, bits_list[0])
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
-    copy_metadata(args.images[0], args.output)
+    copy_metadata(args.inputs[0], args.output)
 
 
 if __name__ == "__main__":

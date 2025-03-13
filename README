@@ -107,10 +107,15 @@ and the position bottom-left.
 If "exiftool" command is available on your system, EXIF metadata and ICC profile of the first
 input image are preserved in the merged image.
 
-You can generate a video file from the input images.  You must specify the FPS (frames per second)
-of the video.  Supported formats are MP4 and MOV (.mp4 and .mov).
+If the output file name has an extension of videos (.mp4 and .mov), a video whose frames are
+the input images is created.  You can specify the FPS (frames per second).
 
-  $ itb_stack.py input*.jpg -o output.mp4 --video 0.5
+  $ itb_stack.py input*.jpg -o output.mp4 --output-video-fps 0.5
+
+If each input file name has an extension of videos (.mp4 and .mov), frames are extracted as
+input images.  You can specify the FPS (frames per second).
+
+  $ itb_stack.py input.mp4 -o output.jpg --input-video-fps 0.5
 
 The following merging methods are supported.
 
