@@ -557,6 +557,11 @@ def align_images_hugin(images, input_paths, bits_list):
   return aligned_images
 
 
+def fix_overflown_image(image):
+  """Replaces NaN and -inf with 0, and inf with 1."""
+  return np.clip(np.nan_to_num(image, nan=0.0, posinf=1.0, neginf=0.0), 0, None)
+
+
 def merge_images_average(images):
   """Merges images by average composition."""
   return np.mean(images, axis=0)
@@ -635,7 +640,19 @@ def merge_images_mertens(images):
                  for image in images]
   merger = cv2.createMergeMertens()
   hdr = merger.process(byte_images)
+  hdr = normalize_negative_image(hdr)
   return hdr
+
+
+def normalize_negative_image(image, clip_percentile=2.0):
+  """Normalizes negaive pixels."""
+  image = cv2.GaussianBlur(image, (5, 5), 0)
+  min_val = np.percentile(image, clip_percentile)
+  if min_val > -0.01:
+    return np.clip(image, 0, None)
+  image = np.clip(image, min_val, None)
+  image -= min_val
+  return np.clip(image, 0, None)
 
 
 def z_score_normalization(image):
@@ -1023,6 +1040,18 @@ def crop_to_match(image, target_size):
   return image[y_offset:y_offset+th, x_offset:x_offset+tw]
 
 
+def log_image_stats(image, prefix):
+  has_nan = np.isnan(image).any()
+  if has_nan:
+    image = fix_overflown_image(image)
+  min = np.min(image)
+  max = np.max(image)
+  mean = np.mean(image)
+  stddev = np.std(image)
+  logger.debug(f"{prefix} stats: min={min:.3f}, max={max:.3f},"
+               f" mean={mean:.3f}, stddev={stddev:.3f}, nan={has_nan}")
+
+
 def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   """Postprocess images as a merged image."""
   trim_params = parse_trim_expression(args.trim) if len(args.trim) > 0 else None
@@ -1050,9 +1079,11 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif args.merge in ["robertson", "r"]:
     logger.info(f"Merging images by Robertson's method")
     merged_image = merge_images_robertson(images, meta_list)
+    is_hdr = True
   elif args.merge in ["mertens", "m"]:
     logger.info(f"Merging images by Mertens's method")
     merged_image = merge_images_mertens(images)
+    is_hdr = True
   elif args.merge in ["focus", "f"]:
     logger.info(f"Merging images by focus stacking")
     merged_image = merge_images_focus_stacking(images)
@@ -1061,6 +1092,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     merged_image = merge_images_stitch(images)
   else:
     raise ValueError(f"Unknown merge method")
+  if logger.isEnabledFor(logging.DEBUG):
+    log_image_stats(merged_image, "merged")
+  merged_image = fix_overflown_image(merged_image)
   if is_hdr:
     if args.tonemap in ["linear", "l"]:
       logger.info(f"Tone mapping images by linear reduction")
@@ -1076,6 +1110,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
       merged_image = tone_map_image_mantiuk(merged_image)
     else:
       raise ValueError(f"Unknown tone method")
+    if logger.isEnabledFor(logging.DEBUG):
+      log_image_stats(merged_image, "tonemapped")
+    merged_image = fix_overflown_image(merged_image)
   if not args.no_restore:
     logger.info(f"Applying auto restoration of brightness")
     merged_image = adjust_exposure(merged_image, mean_brightness)

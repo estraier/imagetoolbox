@@ -42,7 +42,7 @@ aperture contribute more to the final image.
 Most cameras support exposure bracketing.  If you use it on the S mode with a fixed ISO, images
 are taken with various apertures but exposure is different.  Then, set -ax option, which adjusts
 exposure of each input image before merging.
-  
+
   $ itb_stack.py input*.jpg -o output.jpg -ax -m w
 
 If bracketing is done handheld without a tripod, pictures will be shifted a little, which
@@ -123,7 +123,8 @@ The following merging methods are supported.
   - focus (f) : focus stacking using Laplacian filter
   - stitch (s) : to create a panoramic image
 
-Only Debevec supports tone mapping for post-processing.  The following methods are supported.
+Debevec, Robertson, and Mergen support tone mapping for post-processing.  The following methods
+are supported.
 
   - linear (l) : linear conversion
   - reinhard (r) : Reinhard's method, based on human recognition model
