@@ -235,49 +235,6 @@ def inverse_sigmoidal_contrast_image(image, gain, mid):
   return np.clip((naive_inverse_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
 
 
-def bilateral_denoise_image(image, radius):
-  """Applies bilateral denoise."""
-  ksize = math.ceil(2 * radius) + 1
-  if ksize <= 5:
-    sigma_color = 25
-    sigma_space = 25
-  elif ksize <= 7:
-    sigma_color = 50
-    sigma_space = 50
-  elif ksize <= 9:
-    sigma_color = 75
-    sigma_space = 75
-  else:
-    sigma_color = 15
-    sigma_space = 150
-  return cv2.bilateralFilter(image, ksize, sigma_color, sigma_space)
-
-
-def gaussian_blur_image(image, radius):
-  """Applies Gaussian blur."""
-  ksize = math.ceil(2 * radius) + 1
-  return cv2.GaussianBlur(image, (ksize, ksize), 0)
-
-
-def gaussian_unsharp_image(image, radius):
-  """Applies unsharp mask by Gaussian blur."""
-  ksize = math.ceil(2 * radius) + 1
-  if radius == 1:
-    sigma = 0.8
-    amount = 1.5
-    threshold=0.01
-  else:
-    sigma = radius / 2
-    amount = 1.2
-    threshold=0.03
-  blur_image = cv2.GaussianBlur(image, (ksize, ksize), sigma)
-  diff_image = image - blur_image
-  mask = np.abs(diff_image) > threshold
-  diff_image *= amount * mask.astype(np.float32)
-  sharp_image = image + diff_image
-  return np.clip(sharp_image, 0, 1)
-
-
 def adjust_exposure(image, target_brightness):
   """Adjusts the exposure of an image to a target brightness."""
   num_tries = 0
@@ -781,6 +738,49 @@ def fill_black_margin_image(image):
   restored = np.where(restore_mask, image, inpainted_image)
   trimmed = restored[padding:-padding, padding:-padding]
   return np.clip(trimmed, 0, 1)
+
+
+def bilateral_denoise_image(image, radius):
+  """Applies bilateral denoise."""
+  ksize = math.ceil(2 * radius) + 1
+  if ksize <= 5:
+    sigma_color = 25
+    sigma_space = 25
+  elif ksize <= 7:
+    sigma_color = 50
+    sigma_space = 50
+  elif ksize <= 9:
+    sigma_color = 75
+    sigma_space = 75
+  else:
+    sigma_color = 15
+    sigma_space = 150
+  return cv2.bilateralFilter(image, ksize, sigma_color, sigma_space)
+
+
+def gaussian_blur_image(image, radius):
+  """Applies Gaussian blur."""
+  ksize = math.ceil(2 * radius) + 1
+  return cv2.GaussianBlur(image, (ksize, ksize), 0)
+
+
+def gaussian_unsharp_image(image, radius):
+  """Applies unsharp mask by Gaussian blur."""
+  ksize = math.ceil(2 * radius) + 1
+  if radius == 1:
+    sigma = 0.8
+    amount = 1.5
+    threshold=0.01
+  else:
+    sigma = radius / 2
+    amount = 1.2
+    threshold=0.03
+  blur_image = cv2.GaussianBlur(image, (ksize, ksize), sigma)
+  diff_image = image - blur_image
+  mask = np.abs(diff_image) > threshold
+  diff_image *= amount * mask.astype(np.float32)
+  sharp_image = image + diff_image
+  return np.clip(sharp_image, 0, 1)
 
 
 def trim_image(image, top, right, bottom, left):

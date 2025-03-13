@@ -16,15 +16,18 @@ import cv2
 from itb_stack import (
   set_logging_level,
   load_image, save_image, save_video,
-  compute_brightness, adjust_exposure,
+  compute_brightness,
+  lighten_image, darken_image, sigmoidal_contrast_image, inverse_sigmoidal_contrast_image,
+  adjust_exposure,
   align_images_orb, align_images_sift, align_images_ecc,
   merge_images_average, merge_images_median, merge_images_minimum, merge_images_maximum,
   merge_images_weighted_average,
   merge_images_debevec, merge_images_robertson, merge_images_mertens,
   merge_images_focus_stacking, merge_images_stitch,
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
-  lighten_image, darken_image, sigmoidal_contrast_image, inverse_sigmoidal_contrast_image,
-  fill_black_margin_image, trim_image, scale_image, write_caption,
+  fill_black_margin_image,
+  bilateral_denoise_image, gaussian_blur_image, gaussian_unsharp_image,
+  trim_image, scale_image, write_caption,
 )
 
 
@@ -75,7 +78,7 @@ def split_image_vertically(image):
   return left_half, right_half
 
 
-class TestImageProcessing(unittest.TestCase):
+class TestItbStack(unittest.TestCase):
 
   def setUp(self):
     self.test_dir = tempfile.TemporaryDirectory()
@@ -83,7 +86,7 @@ class TestImageProcessing(unittest.TestCase):
 
   def tearDown(self):
     self.test_dir.cleanup()
-  
+
   @patch("cv2.imread", return_value=generate_test_image())
   def test_load_image_mock(self, mock_imread):
     image, bits = load_image("test_input.jpg")
@@ -112,15 +115,46 @@ class TestImageProcessing(unittest.TestCase):
     self.assertEqual(image.shape, loaded_image.shape)
     self.assertEqual(bits, 16)
 
+  @patch("cv2.VideoWriter")
+  def test_save_video_mock(self, mock_video_writer):
+    images = [generate_test_image() for _ in range(3)]
+    path = os.path.join(self.temp_path, "test_output.mp4")
+    mock_writer_instance = mock_video_writer.return_value
+    save_video(path, images, 1)
+    mock_video_writer.assert_called_once_with(
+      path, cv2.VideoWriter_fourcc(*"mp4v"), 1, (images[0].shape[1], images[0].shape[0]))
+    self.assertEqual(mock_writer_instance.write.call_count, len(images))
+    mock_writer_instance.release.assert_called_once()
+
   def test_save_video(self):
     images = [generate_test_image() for _ in range(3)]
     path = os.path.join(self.temp_path, "test_output.mp4")
     save_video(path, images, 1)
-    
+
   def test_compute_brightness(self):
     image = generate_test_image()
     brightness = compute_brightness(image)
     self.assertTrue(0 <= brightness <= 1)
+
+  def test_lighten_image(self):
+    image = generate_test_image() * 2
+    processed = lighten_image(image, 1)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_darken_image(self):
+    image = generate_test_image() * 2
+    processed = darken_image(image, 1)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_sigmoidal_contrast_image(self):
+    image = generate_test_image() * 2
+    processed = sigmoidal_contrast_image(image, 1, 0.5)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_inverse_sigmoidal_contrast_image(self):
+    image = generate_test_image() * 2
+    processed = inverse_sigmoidal_contrast_image(image, 1, 0.5)
+    self.assertEqual(processed.shape, image.shape)
 
   def test_adjust_exposure(self):
     image = generate_test_image()
@@ -201,12 +235,12 @@ class TestImageProcessing(unittest.TestCase):
     meta_list = [{}, {}, {}]
     merged = merge_images_robertson(images, meta_list)
     self.assertEqual(merged.shape, images[0].shape)
-    
+
   def test_merge_images_mertens(self):
     images = [generate_test_image() for _ in range(3)]
     merged = merge_images_mertens(images)
     self.assertEqual(merged.shape, images[0].shape)
-    
+
   def test_merge_images_focus_stacking(self):
     images = [generate_test_image() for _ in range(3)]
     merged = merge_images_focus_stacking(images)
@@ -221,7 +255,7 @@ class TestImageProcessing(unittest.TestCase):
     images = (left, mid, right)
     merged = merge_images_stitch(images)
     self.assertEqual(merged.shape[2], images[0].shape[2])
-    
+
   def test_tone_map_image_linear(self):
     image = generate_test_image() * 2
     processed = tone_map_image_linear(image)
@@ -242,29 +276,24 @@ class TestImageProcessing(unittest.TestCase):
     processed = tone_map_image_mantiuk(image)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_lighten_image(self):
-    image = generate_test_image() * 2
-    processed = lighten_image(image, 1)
-    self.assertEqual(processed.shape, image.shape)
-    
-  def test_darken_image(self):
-    image = generate_test_image() * 2
-    processed = darken_image(image, 1)
-    self.assertEqual(processed.shape, image.shape)
-
-  def test_sigmoidal_contrast_image(self):
-    image = generate_test_image() * 2
-    processed = sigmoidal_contrast_image(image, 1, 0.5)
-    self.assertEqual(processed.shape, image.shape)
-    
-  def test_inverse_sigmoidal_contrast_image(self):
-    image = generate_test_image() * 2
-    processed = inverse_sigmoidal_contrast_image(image, 1, 0.5)
-    self.assertEqual(processed.shape, image.shape)
-
   def test_fill_black_margin_image(self):
     image = generate_test_image()
     processed = fill_black_margin_image(image)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_bilateral_denoise_image(self):
+    image = generate_test_image()
+    processed = bilateral_denoise_image(image, 3)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_gaussian_blur_image(self):
+    image = generate_test_image()
+    processed = gaussian_blur_image(image, 3)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_gaussian_unsharp_image(self):
+    image = generate_test_image()
+    processed = gaussian_unsharp_image(image, 3)
     self.assertEqual(processed.shape, image.shape)
 
   def test_trim_image(self):
@@ -276,13 +305,12 @@ class TestImageProcessing(unittest.TestCase):
     image = generate_test_image()
     processed = scale_image(image, 200, 200)
     self.assertEqual(processed.shape[2], image.shape[2])
-    
+
   def test_write_caption(self):
     image = generate_test_image()
     processed = write_caption(image, "hello|2|f0f|T")
     self.assertEqual(processed.shape, image.shape)
 
-    
 
 if __name__ == "__main__":
   if "-v" in sys.argv:
