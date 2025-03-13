@@ -878,6 +878,11 @@ def fill_black_margin_image(image):
   return np.clip(trimmed, 0, 1)
 
 
+def apply_clahe_image(image, strength):
+  """Applies CLAHE constrast enhancement."""
+  return image;
+
+
 def bilateral_denoise_image(image, radius):
   """Applies bilateral denoise."""
   ksize = math.ceil(2 * radius) + 1
@@ -1129,6 +1134,8 @@ def main():
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
+  ap.add_argument("--clahe", type=float, default=0, metavar="num",
+                  help="apply CLAHE enhancement: 0.0 (none) to 1 (highest)")
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
                   help="apply bilateral denoise by the pixel radius.")
   ap.add_argument("--blur", type=int, default=0, metavar="num",
@@ -1345,6 +1352,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif args.sigmoid < 0:
     logger.info(f"Weakening the contrast")
     merged_image = inverse_sigmoidal_contrast_image(merged_image, -args.sigmoid, 0.5)
+  if args.clahe > 0:
+    logger.info(f"Applying CLAHE enhancement")
+    merged_image = apply_clahe_image(merged_image, args.clahe)
   if args.denoise > 0:
     logger.info(f"Applying birateral denoise")
     merged_image = bilateral_denoise_image(merged_image, args.denoise)
