@@ -698,38 +698,6 @@ def make_laplacian_pyramid(image, levels):
   return laplacian_pyr
 
 
-def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=5):
-  """Merges images by focus stacking."""
-  h, w, c = images[0].shape
-  sharpness_maps = np.array([compute_sharpness(img) for img in images])
-  images_array = np.stack(images, axis=0)
-  if smoothness <= 0:
-    best_focus_index = np.argmax(sharpness_maps, axis=0)
-    stacked_image = images_array[best_focus_index, np.arange(h)[:, None], np.arange(w)]
-    return np.clip(stacked_image, 0, 1)
-  weights = sharpness_maps.copy()
-  weights -= np.max(weights, axis=0, keepdims=True)
-  tau = max(np.std(weights) * smoothness, 1e-4)
-  weights = np.exp(weights / tau)
-  weights = weights / (np.sum(weights, axis=0, keepdims=True) + 1e-8)
-  stacked_image = np.sum(weights[..., np.newaxis] * images_array, axis=0)
-  if pyramid_levels <= 1 or min(h, w) < 256:
-    return np.clip(stacked_image, 0, 1)
-  factor = min(2 ** pyramid_levels, min(h, w) // 8)
-  new_h = (h // factor) * factor
-  new_w = (w // factor) * factor
-  y_offset = (h - new_h) // 2
-  x_offset = (w - new_w) // 2
-  cropped_images = np.array([x[y_offset:y_offset + new_h, x_offset:x_offset + new_w]
-                             for x in images])
-  cropped_weights = np.array([x[y_offset:y_offset + new_h, x_offset:x_offset + new_w]
-                              for x in weights])
-  cropped_stacked = merge_images_laplacian_pyramids(
-    cropped_images, cropped_weights, pyramid_levels)
-  stacked_image[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = cropped_stacked
-  return np.clip(stacked_image, 0, 1)
-
-
 def merge_images_laplacian_pyramids(images, weights, pyramid_levels):
   """Merges images by Laplacian Pyramids."""
   weight_pyramids = [make_gaussian_pyramid(weights[i], pyramid_levels)
@@ -744,11 +712,44 @@ def merge_images_laplacian_pyramids(images, weights, pyramid_levels):
       blended += laplacian_pyramids[i][level] * weight_resized
     blended_pyramids.append(blended)
   stacked_image = blended_pyramids[-1]
-  for i in range(len(blended_pyramids)-2, -1, -1):
+  for i in range(len(blended_pyramids) - 2, -1, -1):
     size = (blended_pyramids[i].shape[1], blended_pyramids[i].shape[0])
     stacked_image = cv2.pyrUp(stacked_image, dstsize=size)
     stacked_image = cv2.add(stacked_image, blended_pyramids[i])
   return stacked_image
+
+
+def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=5):
+  """Merges images by focus stacking."""
+  h, w, c = images[0].shape
+  pyramid_levels = min(pyramid_levels, math.log2(min(h, w)) - 3)
+  sharpness_maps = np.array([compute_sharpness(img) for img in images])
+  images_array = np.stack(images, axis=0)
+  if smoothness <= 0:
+    best_focus_index = np.argmax(sharpness_maps, axis=0)
+    stacked_image = images_array[best_focus_index, np.arange(h)[:, None], np.arange(w)]
+    return np.clip(stacked_image, 0, 1)
+  weights = sharpness_maps.copy()
+  weights -= np.max(weights, axis=0, keepdims=True)
+  tau = max(np.std(weights) * smoothness, 1e-4)
+  weights = np.exp(weights / tau)
+  weights = weights / (np.sum(weights, axis=0, keepdims=True) + 1e-8)
+  stacked_image = np.sum(weights[..., np.newaxis] * images_array, axis=0)
+  if pyramid_levels <= 1 or min(h, w) < 256:
+    return np.clip(stacked_image, 0, 1)
+  factor = 2 ** pyramid_levels
+  new_h = (h // factor) * factor
+  new_w = (w // factor) * factor
+  y_offset = (h - new_h) // 2
+  x_offset = (w - new_w) // 2
+  cropped_images = np.array([x[y_offset:y_offset + new_h, x_offset:x_offset + new_w]
+                             for x in images])
+  cropped_weights = np.array([x[y_offset:y_offset + new_h, x_offset:x_offset + new_w]
+                              for x in weights])
+  cropped_stacked = merge_images_laplacian_pyramids(
+    cropped_images, cropped_weights, pyramid_levels)
+  stacked_image[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = cropped_stacked
+  return np.clip(stacked_image, 0, 1)
 
 
 def merge_images_stitch(images):
