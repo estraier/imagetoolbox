@@ -874,6 +874,21 @@ def trim_image(image, top, right, bottom, left):
   return cropped_image
 
 
+def perspective_correct_image(image, tl, tr, br, bl):
+  h, w = image.shape[:2]
+  def ratio_to_pixels(rx, ry):
+    return int(rx * w), int(ry * h)
+  tl = ratio_to_pixels(*tl)
+  tr = ratio_to_pixels(*tr)
+  br = ratio_to_pixels(*br)
+  bl = ratio_to_pixels(*bl)
+  src_points = np.array([tl, tr, br, bl], dtype=np.float32)
+  dst_points = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+  matrix = cv2.getPerspectiveTransform(src_points, dst_points)
+  warped_image = cv2.warpPerspective(image, matrix, (w, h))
+  return warped_image
+
+
 def get_scaled_image_size(image, long_size):
   """Gets the new width and height if an image is scaled."""
   h, w = image.shape[:2]
@@ -940,9 +955,13 @@ def write_caption(image, capexpr):
   return image
 
 
-def parse_trim_expression(expression):
+def parse_trim_expression(expr):
   """Parses trimming expression and returns TLBR ratios."""
-  values = list(map(float, re.split(r'[ ,\|]+', expression.strip())))
+  expr = expr.strip()
+  if not expr:
+    return None
+  values = list(map(float, re.split(r'[ ,\|]+', expr.strip())))
+  values = [min(max(float(v), 0), 100) / 100 for v in values]
   if len(values) == 1:
     t = r = b = l = values[0]
   elif len(values) == 2:
@@ -955,20 +974,57 @@ def parse_trim_expression(expression):
     t, r, b, l = values
   else:
     raise ValueError("trim expression must contain 1 to 4 values")
-  clip = lambda v: min(max(float(v), 0), 100) / 100
-  return clip(t), clip(r), clip(b), clip(l)
+  return t, r, b, l
 
 
-def parse_scale_expression(expression):
+def parse_pers_expression(expr):
+  """Parses perspective correction expression and returns TL,TR,BR,TL ratios."""
+  expr = expr.strip()
+  if not expr:
+    return None
+  values = list(map(float, re.split(r'[ ,\|]+', expr.strip())))
+  values = [min(max(float(v), 0), 100) / 100 for v in values]
+  if len(values) == 4:
+    coords = [
+      (values[0], values[0]),
+      (1 - values[1], values[1]),
+      (1 - values[2], 1 - values[2]),
+      (values[3], 1 - values[3])
+    ]
+  elif len(values) == 8:
+    coords = [
+      (values[0], values[1]),
+      (values[2], values[3]),
+      (values[4], values[5]),
+      (values[6], values[7])
+    ]
+  else:
+    raise ValueError("perspective expression must contain 4 or 8 values")
+  center_x = sum(x for x, _ in coords) / 4
+  center_y = sum(y for _, y in coords) / 4
+  def angle_from_center(point):
+    x, y = point
+    return np.arctan2(y - center_y, x - center_x)
+  sorted_points = sorted(coords, key=angle_from_center)
+  tops = sorted(sorted_points[:2], key=lambda p: p[0])
+  bottoms = sorted(sorted_points[2:], key=lambda p: p[0])
+  return tops[0], tops[1], bottoms[1], bottoms[0]
+
+
+def parse_scale_expression(expr):
   """Parses scaling expression and returns WH pixels."""
-  values = list(map(float, re.split(r'[ ,\|]+', expression.strip())))
-  clip = lambda v: max(int(v), 1)
+  expr = expr.strip()
+  if not expr:
+    return None
+  values = list(map(float, re.split(r'[ ,\|]+', expr.strip())))
+  values = [int(v) for v in values]
   if len(values) == 1:
-    w, h = clip(values[0]), None
+    w, h = values[0], None
   elif len(values) == 2:
-    w, h = clip(values[0]), clip(values[1])
+    w, h = values[0], values[1]
   else:
     raise ValueError("scale expression must contain 1 to 2 values")
+  print(w, h)
   return w, h
 
 
@@ -1019,8 +1075,11 @@ def main():
                   help="apply Gaussian unsharp mask by the pixel radius.")
   ap.add_argument("--trim", default="", metavar="numlist",
                   help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
+  ap.add_argument("--pers", default="", metavar="numlist",
+                  help="perspective change: X1,Y1,X2,Y2,X3,Y3,X4,Y4 in percentage"
+                  " eg. 10,10,10,90,0,100,100,0")
   ap.add_argument("--scale", default="", metavar="numlist",
-                  help="trim sides: WIDTH,HEIGHT in pixels eg. 1920,1080")
+                  help="scale change: WIDTH,HEIGHT in pixels eg. 1920,1080")
   ap.add_argument("--caption", default="", metavar="text",
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--video", type=float, default=0, metavar="num",
@@ -1113,8 +1172,9 @@ def log_image_stats(image, prefix):
 
 def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   """Postprocess images as a merged image."""
-  trim_params = parse_trim_expression(args.trim) if len(args.trim) > 0 else None
-  scale_params = parse_scale_expression(args.scale) if len(args.scale) > 0 else None
+  trim_params = parse_trim_expression(args.trim)
+  pers_params = parse_pers_expression(args.pers)
+  scale_params = parse_scale_expression(args.scale)
   is_hdr = False
   if args.merge in ["average", "a"]:
     logger.info(f"Merging images by average composition")
@@ -1202,6 +1262,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   if trim_params:
     logger.info(f"Trimming the image")
     merged_image = trim_image(merged_image, *trim_params)
+  if pers_params:
+    logger.info(f"Doing perspective correction of the image")
+    merged_image = perspective_correct_image(merged_image, *pers_params)
   if scale_params:
     logger.info(f"Scaling the image")
     if scale_params[1] is None:
