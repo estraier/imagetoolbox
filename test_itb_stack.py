@@ -26,6 +26,7 @@ from itb_stack import (
   merge_images_focus_stacking, merge_images_stitch,
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
   fill_black_margin_image,
+  apply_global_histeq_image, apply_clahe_image,
   bilateral_denoise_image, gaussian_blur_image, gaussian_unsharp_image,
   trim_image, scale_image, write_caption,
 )
@@ -303,6 +304,16 @@ class TestItbStack(unittest.TestCase):
   def test_fill_black_margin_image(self):
     image = generate_test_image()
     processed = fill_black_margin_image(image)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_global_histeq_image(self):
+    image = generate_test_image()
+    processed = apply_global_histeq_image(image)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_clahe_image(self):
+    image = generate_test_image()
+    processed = apply_clahe_image(image, 2)
     self.assertEqual(processed.shape, image.shape)
 
   def test_bilateral_denoise_image(self):

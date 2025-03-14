@@ -675,9 +675,6 @@ def merge_images_debevec(images, meta_list):
     exposures = luminances / max(np.min(luminances), 0.0001)
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
-
-  # TODO: get ratio to restore precision.
-
   merger = cv2.createMergeDebevec()
   hdr = merger.process(byte_images, times=exposures)
   return hdr
@@ -694,9 +691,6 @@ def merge_images_robertson(images, meta_list):
     exposures = luminances / max(np.min(luminances), 0.0001)
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
-
-  # TODO: get ratio to restore precision.
-
   merger = cv2.createMergeRobertson()
   hdr = merger.process(byte_images, times=exposures)
   return hdr
@@ -706,9 +700,6 @@ def merge_images_mertens(images):
   """Merges images by Mertens's method."""
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
-
-  # TODO: get ratio to restore precision.
-
   merger = cv2.createMergeMertens()
   hdr = merger.process(byte_images)
   hdr = normalize_negative_image(hdr)
@@ -828,9 +819,6 @@ def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
 def merge_images_stitch(images):
   """Stitches images as a panoramic photo and removes black margins."""
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8) for image in images]
-
-  # TODO: get ratio to restore precision.
-
   stitcher = cv2.Stitcher_create()
   status, stitched_image = stitcher.stitch(byte_images)
   if status != cv2.Stitcher_OK:
@@ -871,9 +859,8 @@ def fill_black_margin_image(image):
   image = cv2.copyMakeBorder(
     image, padding, padding, padding, padding, cv2.BORDER_CONSTANT, value=(0, 0, 0))
   byte_image = (image * 255).astype(np.uint8)
-
-  # TODO: get ratio to restore precision.
-
+  undo_bytes = byte_image.astype(np.float32)
+  float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
   gray_image = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
   restore_mask = (gray_image > 0).astype(np.uint8) * 255
   restore_mask = cv2.cvtColor(restore_mask, cv2.COLOR_GRAY2BGR).astype(np.bool)
@@ -889,24 +876,62 @@ def fill_black_margin_image(image):
   inpainted_image = np.clip(inpainted_image.astype(np.float32) / 255, 0, 1)
   inpainted_image = cv2.GaussianBlur(inpainted_image, (5, 5), 0)
   restored = np.where(restore_mask, image, inpainted_image)
+  restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
   trimmed = restored[padding:-padding, padding:-padding]
-  return np.clip(trimmed, 0, 1)
+  return trimmed
 
 
-def apply_clahe_image(image, clip_limit, gamma=2.2):
+def apply_global_histeq_image(image, gamma=2.2, restore_color=True):
+  """Applies global histogram equalization contrast enhancement."""
+  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+  l, a, b = cv2.split(lab)
+  l = np.power(l / 100, 1 / gamma) * 255
+  byte_l = (l).astype(np.uint8)
+  undo_bytes = byte_l.astype(np.float32)
+  float_ratio = np.where(l > 0, undo_bytes / (l + 1e-6), 1)
+  new_l = cv2.equalizeHist(byte_l).astype(np.float32)
+  new_l = np.power(new_l / 255, gamma) * 100
+  new_l = np.clip(new_l / np.maximum(float_ratio, 1e-6), 0, 100)
+  lab = cv2.merge((new_l, a, b))
+  enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+  if restore_color:
+    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    _, old_s, old_v = cv2.split(old_hsv)
+    new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
+    new_h, _, new_v = cv2.split(new_hsv)
+    s_estimate_ratio = (1 - new_v) / (1 - old_v + 1e-10)
+    s_estimate_ratio = np.clip(s_estimate_ratio, 1 / 8, 8)
+    merged_s = np.clip(old_s * (s_estimate_ratio ** 0.5), 0, 1)
+    final_hsv = cv2.merge((new_h, merged_s, new_v))
+    enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+  return np.clip(enhanced_image, 0, 1)
+
+
+def apply_clahe_image(image, clip_limit, gamma=2.2, restore_color=True):
   """Applies CLAHE contrast enhancement."""
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
   l = np.power(l / 100, 1 / gamma) * 100
   byte_l = (l).astype(np.uint8)
-  byte_ratio = (byte_l / (np.where(l == 0, 1e-10, l))).astype(np.float32)
+  undo_bytes = byte_l.astype(np.float32)
+  float_ratio = np.where(l > 0, undo_bytes / (l + 1e-6), 1)
   tile_grid_size = (8, 8)
   clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
   new_l = clahe.apply(byte_l).astype(np.float32)
   new_l = np.power(new_l / 100, gamma) * 100
-  new_l = np.clip(new_l * byte_ratio, 0, 100)
+  new_l = np.clip(new_l / np.maximum(float_ratio, 1e-6), 0, 100)
   lab = cv2.merge((new_l, a, b))
   enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+  if restore_color:
+    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    _, old_s, old_v = cv2.split(old_hsv)
+    new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
+    new_h, _, new_v = cv2.split(new_hsv)
+    s_estimate_ratio = (1 - new_v) / (1 - old_v + 1e-10)
+    s_estimate_ratio = np.clip(s_estimate_ratio, 1 / 8, 8)
+    merged_s = np.clip(old_s * (s_estimate_ratio ** 0.5), 0, 1)
+    final_hsv = cv2.merge((new_h, merged_s, new_v))
+    enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
   return np.clip(enhanced_image, 0, 1)
 
 
@@ -1118,7 +1143,6 @@ def parse_scale_expression(expr):
     w, h = values[0], values[1]
   else:
     raise ValueError("scale expression must contain 1 to 2 values")
-  print(w, h)
   return w, h
 
 
@@ -1161,8 +1185,8 @@ def main():
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
-  ap.add_argument("--clahe", type=float, default=0, metavar="num",
-                  help="apply CLAHE enhancement by the clip limit.")
+  ap.add_argument("--histeq", type=float, default=0, metavar="num",
+                  help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
                   help="apply bilateral denoise by the pixel radius.")
   ap.add_argument("--blur", type=int, default=0, metavar="num",
@@ -1379,9 +1403,12 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif args.sigmoid < 0:
     logger.info(f"Weakening the contrast")
     merged_image = inverse_sigmoidal_contrast_image(merged_image, -args.sigmoid, 0.5)
-  if args.clahe > 0:
+  if args.histeq > 0:
     logger.info(f"Applying CLAHE enhancement")
-    merged_image = apply_clahe_image(merged_image, args.clahe)
+    merged_image = apply_clahe_image(merged_image, args.histeq)
+  elif args.histeq < 0:
+    logger.info(f"Applying global HE enhancement")
+    merged_image = apply_global_histeq_image(merged_image)
   if args.denoise > 0:
     logger.info(f"Applying birateral denoise")
     merged_image = bilateral_denoise_image(merged_image, args.denoise)
