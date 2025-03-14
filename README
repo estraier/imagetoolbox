@@ -47,9 +47,9 @@ exposure of each input image before merging.
 
 If bracketing is done handheld without a tripod, pictures will be shifted a little, which
 causes blur after merging.  In that case, aligning input images is useful.  In most cases, the
-SIFT aligner is the best option.
+ORB aligner is fast and good enough.
 
-  $ itb_stack.py input*.jpg -o output.jpg -ax -m w -a s
+  $ itb_stack.py input*.jpg -o output.jpg -ax -m w -a o
 
 To create an HDR (high dynamic range) image from images taken by exposure bracketing, run the
 following command.  It merges input images by Debevec's method and applies tone mapping by
@@ -59,7 +59,7 @@ Reinhard's method.
 
 Alignment is also useful for creating HDR images of handheld pictures.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a s
+  $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a o
 
 By default, brightness of the merged image is calibrated to match the average brightness of the
 input images.  If you calibrate brightness yourself, suppress it.
@@ -81,7 +81,7 @@ Merging multiple pictures taken with high sensitivity is effective in suppressin
 number of pictures is less than 20, use median instead of average.  Moreover, ignoring unaligned
 images from merging is a practical solution against failures of aligning pictures.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m median -a s -iu
+  $ itb_stack.py input*.jpg -o output.jpg -m median -a o -iu
 
 Focus stacking of images taken with different focus distance is also supported.  In this case,
 using ECC aligner is sometimes better than SIFT.
@@ -156,22 +156,22 @@ The following aligning methods are supported.
 In summary, to create a pseudo-STF image, averaging exposure and weighted average composition
 produces the best results in most cases.
 
-  $ itb_stack.py input*.jpg -o output.jpg -ax -m w -a s
+  $ itb_stack.py input*.jpg -o output.jpg -ax -m w -a o
 
 To create an HDR image, combining the Debevec and Robertson methods produces the best results in
 most cases.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a s
+  $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a o
 
 The focus stacking algorithm uses softmax of local contrast for composition weight.  It is an
 interesting fact that this algorithm is useful to create HDR images.  Averaging exposure and
 applying focus stacking produces contrasty and natural images.
 
-  $ itb_stack.py input*.jpg -o output.jpg -ax -m f -a s
+  $ itb_stack.py input*.jpg -o output.jpg -ax -m f -a o
 
 To reduce the effect of camera shake during a bracketing shoot, utilizing an alignment method is
-recommended.  Usually SIFT is recommended as in the above examples.  However, each method has
-its pros and cons.  Thus, try different ones: SIFT, ORB, ECC, and Hugin in sequence.
+recommended.  Usually ORB is enough as in the above examples.  However, each method has
+its pros and cons.  Thus, try different ones: ORB, SIFT, ECC, and Hugin in sequence.
 
 For unit testing, run the following command.
 

@@ -361,6 +361,16 @@ def log_homography_matrix(m):
                f"scale=({scale_x:.2f}, {scale_y:.2f}), angle={angle:.2f}°")
 
 
+def make_image_for_alignment(image, clip_limit):
+  """Make a byte-gray enhanced image for alignment."""
+  gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  byte_image = (np.clip(gray_image, 0, 1) * 255).astype(np.uint8)
+  tile_grid_size = (8, 8)
+  clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+  byte_image = clahe.apply(byte_image)
+  return np.clip(byte_image, 0, 255)
+
+
 def align_images_orb(images, aligned_indices):
   """Aligns images using ORB."""
   if len(images) < 2:
@@ -368,8 +378,7 @@ def align_images_orb(images, aligned_indices):
   ref_image = images[0]
   h, w = ref_image.shape[:2]
   orb = cv2.ORB_create(nfeatures=5000)
-  ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
-  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
+  ref_gray = make_image_for_alignment(ref_image, 2)
   ref_kp, ref_des = orb.detectAndCompute(ref_gray, None)
   if ref_des is None:
     logger.debug(f"reference image has no descriptors")
@@ -379,8 +388,7 @@ def align_images_orb(images, aligned_indices):
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
-    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
+    image_gray = make_image_for_alignment(image, 2)
     kp, des = orb.detectAndCompute(image_gray, None)
     if des is None:
       logger.debug(f"image has no descriptors")
@@ -451,8 +459,7 @@ def align_images_sift(images, aligned_indices):
   ref_image = images[0]
   h, w = ref_image.shape[:2]
   sift = cv2.SIFT_create()
-  ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
-  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
+  ref_gray = make_image_for_alignment(ref_image, 4)
   ref_kp, ref_des = sift.detectAndCompute(ref_gray, None)
   if ref_des is None:
     logger.debug("reference image has no descriptors")
@@ -461,8 +468,7 @@ def align_images_sift(images, aligned_indices):
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
-    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
+    image_gray = make_image_for_alignment(image, 4)
     kp, des = sift.detectAndCompute(image_gray, None)
     if des is None:
       logger.debug("image has no descriptors")
@@ -529,14 +535,12 @@ def align_images_ecc(images, aligned_indices):
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
-  ref_gray = cv2.cvtColor(ref_image, cv2.COLOR_BGR2GRAY)
-  ref_gray = (np.clip(ref_gray, 0, 1) * 255).astype(np.uint8)
+  ref_gray = make_image_for_alignment(ref_image, 6)
   aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
-    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    image_gray = (np.clip(image_gray, 0, 1) * 255).astype(np.uint8)
+    image_gray = make_image_for_alignment(image, 6)
     warp_matrix = np.eye(2, 3, dtype=np.float32)
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 1e-6)
     try:
@@ -1206,7 +1210,7 @@ def main():
                   help="input video files with the FPS")
   ap.add_argument("--output-video-fps", type=float, default=1, metavar="num",
                   help="output a video file with the FPS")
-  ap.add_argument("--max-memory-usage", type=float, default=2, metavar="num",
+  ap.add_argument("--max-memory-usage", type=float, default=8, metavar="num",
                   help="maximum memory usage in GiB")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   args = ap.parse_args()
