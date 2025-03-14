@@ -117,9 +117,9 @@ def load_video(file_path, mem_allowance, input_fps):
   cap = cv2.VideoCapture(file_path)
   if not cap.isOpened():
     raise ValueError(f"Failed to open video: {file_path}")
-  fps = cap.get(cv2.CAP_PROP_FPS)  # Frames per second
+  fps = cap.get(cv2.CAP_PROP_FPS)
   total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-  duration = total_frames / fps  # Total video duration in seconds
+  duration = total_frames / fps
   logger.debug(f"fps={fps}, frames={total_frames}, duration={duration:.2f}")
   frames = []
   total_mem_usage = 0
@@ -130,7 +130,7 @@ def load_video(file_path, mem_allowance, input_fps):
       cap.set(cv2.CAP_PROP_POS_MSEC, current_time * 1000)
       ret, frame = cap.read()
       if not ret:
-        break  # End of video
+        break
       frame, bits = normalize_input_image(frame)
       frame_mem_size = estimate_image_memory_size(frame)
       if total_mem_usage + frame_mem_size > mem_allowance:
@@ -764,7 +764,7 @@ def make_laplacian_pyramid(image, levels):
     size = (gaussian_pyr[i].shape[1], gaussian_pyr[i].shape[0])
     expanded = cv2.pyrUp(gaussian_pyr[i+1], dstsize=size)
     laplacian_pyr.append(cv2.subtract(gaussian_pyr[i], expanded))
-  laplacian_pyr.append(gaussian_pyr[-1])  # Add the last level
+  laplacian_pyr.append(gaussian_pyr[-1])
   return laplacian_pyr
 
 
@@ -1026,6 +1026,7 @@ def trim_image(image, top, right, bottom, left):
 
 
 def perspective_correct_image(image, tl, tr, br, bl):
+  """Apply perspective correction on the image."""
   h, w = image.shape[:2]
   def ratio_to_pixels(rx, ry):
     return int(rx * w), int(ry * h)

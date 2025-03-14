@@ -29,7 +29,7 @@ from itb_stack import (
   apply_global_histeq_image, apply_clahe_image,
   saturate_colors_image, desaturate_colors_image,
   bilateral_denoise_image, gaussian_blur_image, gaussian_unsharp_image,
-  trim_image, scale_image, write_caption,
+  perspective_correct_image, trim_image, scale_image, write_caption,
 )
 
 
@@ -341,6 +341,12 @@ class TestItbStack(unittest.TestCase):
     image = generate_test_image()
     processed = gaussian_unsharp_image(image, 3)
     self.assertEqual(processed.shape, image.shape)
+
+  def perspective_correct_image(self):
+    image = generate_test_image()
+    processed = perspective_correct_image(
+      image, (10, 10), (90, 10), (90, 90), (10, 90))
+    self.assertEqual(processed.shape[2], image.shape[2])
 
   def test_trim_image(self):
     image = generate_test_image()
