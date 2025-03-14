@@ -967,6 +967,61 @@ def desaturate_colors_image(image, factor):
   return mod_image.astype(np.float32)
 
 
+def convert_grayscale_image(image, name):
+  """Converts the image into grayscale."""
+  confs = [(("bt601", "601"), (0.299, 0.587, 0.114)),
+           (("bt709", "709"), (0.2126, 0.7152, 0.0722)),
+           (("bt2020", "2020"), (0.2627, 0.6780, 0.0593)),
+           (("red", "r"), (1.0, 0.41, 0.08)),
+           (("orange", "o"), (1.0, 0.83, 0.166)),
+           (("yellow", "y"), (0.6, 1.0, 0.2)),
+           (("green", "g"), (0.3, 1.0, 0.2)),
+           (("blue", "b"), (0.2, 0.5, 1.0)),
+           (("mean", "m"), (1.0, 1.0, 1.0))]
+  color_map = None
+  for conf in confs:
+    if name in conf[0]:
+      color_map = conf[1]
+      break
+  if color_map:
+    sum_ratio = sum(color_map)
+    weights = np.array([x / sum_ratio for x in color_map])
+    gray_image = np.dot(image[..., :3], weights).astype(np.float32)
+    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_image, 0, 1)
+  elif name in ["lab", "luminance"]:
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, _, _ = cv2.split(lab)
+    gray_image = l / 100
+    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_image, 0, 1)
+  elif name in ["hsv", "value"]:
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    _, _, v = cv2.split(hsv)
+    gray_image = v
+    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_image, 0, 1)
+  elif name in ["hsl", "lightness"]:
+    hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
+    _, l, _ = cv2.split(hls)
+    gray_image = l
+    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_image, 0, 1)
+  elif name in ["laplacian", "lap"]:
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray_image = cv2.Laplacian(gray_image, cv2.CV_32F)
+    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_image, 0, 1)
+  elif name in ["sobel", "sob"]:
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    sobel_x = cv2.Sobel(gray_image, cv2.CV_32F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(gray_image, cv2.CV_32F, 0, 1, ksize=3)
+    sobel_combined = cv2.magnitude(sobel_x, sobel_y)
+    gray_image = cv2.cvtColor(sobel_combined, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_image, 0, 1)
+  raise ValueError(f"Unknown grayscale name: {name}")
+
+
 def bilateral_denoise_image(image, radius):
   """Applies bilateral denoise."""
   ksize = math.ceil(2 * radius) + 1
@@ -1222,6 +1277,9 @@ def main():
                   help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--saturate", type=float, default=0, metavar="num",
                   help="saturate colors. positive for vivid, negative for muted")
+  ap.add_argument("--gray", default="", metavar="text",
+                  help="convert to grayscale: bt601, bt709, bt2020,"
+                  " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel")
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
                   help="apply bilateral denoise by the pixel radius.")
   ap.add_argument("--blur", type=int, default=0, metavar="num",
@@ -1450,6 +1508,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif args.saturate < 0:
     logger.info(f"Desaturating colors")
     merged_image = desaturate_colors_image(merged_image, -args.saturate)
+  if args.gray:
+    logger.info(f"Converting to grayscale")
+    merged_image = convert_grayscale_image(merged_image, args.gray)
   if args.denoise > 0:
     logger.info(f"Applying birateral denoise")
     merged_image = bilateral_denoise_image(merged_image, args.denoise)
