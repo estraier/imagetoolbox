@@ -171,7 +171,12 @@ applying focus stacking produces contrasty and natural images.
 
 To reduce the effect of camera shake during a bracketing shoot, utilizing an alignment method is
 recommended.  Usually ORB is enough as in the above examples.  However, each method has
-its pros and cons.  Thus, try different ones: ORB, SIFT, ECC, and Hugin in sequence.
+its pros and cons.  Thus, try different ones: ORB, SIFT, ECC, and Hugin in sequence.  You can
+add tuning parameters too.
+
+  $ itb_stack.py input*.jpg -o output.jpg -a o:nfeatures=1000    # faster ORB
+  $ itb_stack.py input*.jpg -o output.jpg -a s:nfeatures=100000  # more accurate SIFT
+  $ itb_stack.py input*.jpg -o output.jpg -a e:use_affine=false  # check shift only
 
 For unit testing, run the following command.
 

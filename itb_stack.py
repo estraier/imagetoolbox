@@ -181,6 +181,11 @@ def estimate_image_memory_size(image):
   return width * height * channels * depth
 
 
+def parse_boolean(text):
+  """Parse a boolean expression and get its boolean value."""
+  return text.strip().lower() in ["true", "t", "1", "yes", "y"]
+
+
 def parse_numeric(text):
   """Parse a numeric expression and get its float value."""
   text = text.lower().strip()
@@ -376,12 +381,13 @@ def make_image_for_alignment(image, clahe_clip_limit):
   return np.clip(byte_image, 0, 255)
 
 
-def align_images_orb(images, aligned_indices, nfeatures=5000):
+def align_images_orb(images, aligned_indices, nfeatures=5000, shift_limit=0.1):
   """Aligns images using ORB."""
   if len(images) < 2:
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
+  diagonal = (h * w) ** 0.5
   check_results = []
   clahe_clip_limits = [2.0, 4.0, 8.0]
   for clahe_clip_limit in clahe_clip_limits:
@@ -416,10 +422,13 @@ def align_images_orb(images, aligned_indices, nfeatures=5000):
     logger.debug(f"detected {len(kp)} key points in the target")
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matches = bf.match(ref_des, des)
-    good_matches = sorted(matches, key=lambda x: x.distance)
-
-    # TODO: check distance and avoid scaling distirtion
-
+    cand_matches = sorted(matches, key=lambda x: x.distance)
+    good_matches = []
+    for m in cand_matches:
+      dist = np.linalg.norm(np.array(ref_kp[m.queryIdx].pt) - np.array(kp[m.trainIdx].pt))
+      dist /= diagonal
+      if dist > shift_limit: continue
+      good_matches.append(m)
     if len(good_matches) > 10:
       logger.debug(f"matches found: {len(good_matches)} of {len(matches)}")
       src_pts = np.float32([ref_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
@@ -474,12 +483,13 @@ def align_images_orb(images, aligned_indices, nfeatures=5000):
   return cropped_images
 
 
-def align_images_sift(images, aligned_indices, nfeatures=50000):
+def align_images_sift(images, aligned_indices, nfeatures=50000, shift_limit=0.1):
   """Aligns images using SIFT."""
   if len(images) < 2:
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
+  diagonal = (h * w) ** 0.5
   check_results = []
   clahe_clip_limits = [2.0, 4.0, 8.0]
   for clahe_clip_limit in clahe_clip_limits:
@@ -513,10 +523,13 @@ def align_images_sift(images, aligned_indices, nfeatures=50000):
       continue
     bf = cv2.BFMatcher()
     matches = bf.knnMatch(ref_des, des, k=2)
-    good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
-
-    # TODO: avoid scaling distirtion
-
+    cand_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
+    good_matches = []
+    for m in cand_matches:
+      dist = np.linalg.norm(np.array(ref_kp[m.queryIdx].pt) - np.array(kp[m.trainIdx].pt))
+      dist /= diagonal
+      if dist > shift_limit: continue
+      good_matches.append(m)
     if len(good_matches) > 10:
       logger.debug(f"matches found: {len(good_matches)} of {len(matches)}")
       src_pts = np.float32([ref_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
@@ -570,13 +583,14 @@ def align_images_sift(images, aligned_indices, nfeatures=50000):
   return cropped_images
 
 
-def align_images_ecc(images, aligned_indices):
+def align_images_ecc(images, aligned_indices, use_affine=True):
   if len(images) < 2:
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
   clahe_clip_limit = 4
   ref_gray = make_image_for_alignment(ref_image, clahe_clip_limit)
+  logger.debug(f"config: clahe={clahe_clip_limit}, use_affine={use_affine}")
   aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
@@ -585,8 +599,9 @@ def align_images_ecc(images, aligned_indices):
     warp_matrix = np.eye(2, 3, dtype=np.float32)
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 1e-6)
     try:
+      motion_mode = cv2.MOTION_AFFINE if use_affine else cv2.MOTION_TRANSLATION
       cc, warp_matrix = cv2.findTransformECC(
-        ref_gray, image_gray, warp_matrix, cv2.MOTION_AFFINE,
+        ref_gray, image_gray, warp_matrix, motion_mode,
         criteria, inputMask=None, gaussFiltSize=5)
       log_homography_matrix(warp_matrix)
       aligned_image = cv2.warpAffine(
@@ -1199,12 +1214,26 @@ def write_caption(image, capexpr):
   return image
 
 
+def parse_align_expression(expr):
+  """Parses alignment expression and returns key-value map."""
+  fields = re.split(r'[ ,\|:;]+', expr.strip())
+  params = {"name": fields[0]}
+  for field in fields[1:]:
+    columns = field.split("=", 1)
+    name = columns[0].strip()
+    if len(columns) > 1:
+      params[name] = columns[1].strip()
+    else:
+      params[name] = "true"
+  return params
+
+
 def parse_trim_expression(expr):
   """Parses trimming expression and returns TLBR ratios."""
   expr = expr.strip()
   if not expr:
     return None
-  values = list(map(float, re.split(r'[ ,\|]+', expr.strip())))
+  values = list(map(float, re.split(r'[ ,\|:;]+', expr.strip())))
   values = [min(max(float(v), 0), 100) / 100 for v in values]
   if len(values) == 1:
     t = r = b = l = values[0]
@@ -1226,7 +1255,7 @@ def parse_pers_expression(expr):
   expr = expr.strip()
   if not expr:
     return None
-  values = list(map(float, re.split(r'[ ,\|]+', expr.strip())))
+  values = list(map(float, re.split(r'[ ,\|:;]+', expr.strip())))
   values = [min(max(float(v), 0), 100) / 100 for v in values]
   if len(values) == 4:
     coords = [
@@ -1260,7 +1289,7 @@ def parse_scale_expression(expr):
   expr = expr.strip()
   if not expr:
     return None
-  values = list(map(float, re.split(r'[ ,\|]+', expr.strip())))
+  values = list(map(float, re.split(r'[ ,\|:;]+', expr.strip())))
   values = [int(v) for v in values]
   if len(values) == 1:
     w, h = values[0], None
@@ -1360,18 +1389,33 @@ def main():
     logger.info(f"Adjusting input exposure to the mean")
     images = [adjust_exposure(image, mean_brightness) for image in images]
   aligned_indices = set()
-  if args.align in ["none", ""]:
+  align_params = parse_align_expression(args.align)
+  align_name = align_params["name"]
+  if align_name in ["none", ""]:
     pass
-  elif args.align in ["orb", "o"]:
+  elif align_name in ["orb", "o"]:
     logger.info(f"Aligning images by ORB")
-    images = align_images_orb(images, aligned_indices)
-  elif args.align in ["sift", "s"]:
+    kwargs = {}
+    if "nfeatures" in align_params:
+      kwargs["nfeatures"] = int(align_params["nfeatures"])
+    if "shift_limit" in align_params:
+      kwargs["shift_limit"] = float(align_params["shift_limit"])
+    images = align_images_orb(images, aligned_indices, **kwargs)
+  elif align_name in ["sift", "s"]:
     logger.info(f"Aligning images by SIFT")
-    images = align_images_sift(images, aligned_indices)
-  elif args.align in ["ecc", "e"]:
+    kwargs = {}
+    if "nfeatures" in align_params:
+      kwargs["nfeatures"] = int(align_params["nfeatures"])
+    if "shift_limit" in align_params:
+      kwargs["shift_limit"] = float(align_params["shift_limit"])
+    images = align_images_sift(images, aligned_indices, **kwargs)
+  elif align_name in ["ecc", "e"]:
     logger.info(f"Aligning images by ECC")
-    images = align_images_ecc(images, aligned_indices)
-  elif args.align in ["hugin", "h"]:
+    kwargs = {}
+    if "use_affine" in align_params:
+      kwargs["use_affine"] = parse_boolean(align_params["use_affine"])
+    images = align_images_ecc(images, aligned_indices, **kwargs)
+  elif align_name in ["hugin", "h"]:
     logger.info(f"Aligning images by Hugin")
     images = align_images_hugin(images, args.inputs, bits_list)
   else:
