@@ -406,7 +406,6 @@ def align_images_orb(images, aligned_indices):
 
     # TODO: check distance and avoid scaling distirtion
 
-
     if len(good_matches) > 10:
       logger.debug(f"matches found: {len(good_matches)} of {len(matches)}")
       src_pts = np.float32([ref_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
@@ -472,38 +471,33 @@ def choose_best_keypoints(keypoints, descriptors, limit):
   return keypoints, descriptors
 
 
-def align_images_sift(images, aligned_indices, best_kps_num=5000, max_kps_num=50000):
+def align_images_sift(images, aligned_indices, nfeatures=50000):
   """Aligns images using SIFT."""
   if len(images) < 2:
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
-  max_kps_num = 50000
-  thresholds = [0.04, 0.05, 0.06]
-  clip_limits = [4.0, 8.0]
-  ref_grays = [make_image_for_alignment(ref_image, clip_limit)
-               for clip_limit in clip_limits]
   check_results = []
-  for threshold in thresholds:
-    sift = cv2.SIFT_create(
-      nfeatures=0, nOctaveLayers=3, contrastThreshold=threshold,
-      edgeThreshold=10, sigma=1.6, descriptorType=cv2.CV_32F)
-    for clip_limit, ref_gray in zip(clip_limits, ref_grays):
-      ref_kp, ref_des = sift.detectAndCompute(ref_gray, None)
-      if ref_des is None or len(ref_kp) < 10: continue
-      score = (abs(math.log(best_kps_num) - math.log(len(ref_kp))), clip_limit, -threshold)
-      logger.debug(f"checking reference image:"
-                   f" threshold={threshold}, clahe={clip_limit}, kp={len(ref_kp)}")
-      check_results.append((score, clip_limit, threshold, sift, ref_gray, ref_kp, ref_des))
+  clip_limits = [2.0, 4.0, 8.0]
+  for clip_limit in clip_limits:
+    ref_gray = make_image_for_alignment(ref_image, clip_limit)
+    sift = cv2.SIFT_create(nfeatures=0)
+    ref_kp, ref_des = sift.detectAndCompute(ref_gray, None)
+    if ref_des is None or len(ref_kp) < 10: continue
+    score = abs(math.log(nfeatures) - math.log(len(ref_kp)))
+    logger.debug(f"checking reference image:"
+                 f" clahe={clip_limit}, kp={len(ref_kp)}")
+    check_results.append((score, clip_limit, ref_gray))
   if not check_results:
     logger.debug("reference image has no descriptors")
     return images
   check_results = sorted(check_results)
-  score, clip_limit, threshold, sift, ref_gray, ref_kp, ref_des = check_results[0]
-  ref_kp, ref_des = choose_best_keypoints(ref_kp, ref_des, max_kps_num)
+  score, clip_limit, ref_gray = check_results[0]
+  sift = cv2.SIFT_create(nfeatures=nfeatures)
+  ref_kp, ref_des = sift.detectAndCompute(ref_gray, None)
   check_results = None
   ref_grays = None
-  logger.debug(f"best config: th={threshold}, cl={clip_limit}, kp={len(ref_kp)}")
+  logger.debug(f"best config: clahe={clip_limit}, kp={len(ref_kp)}")
   aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
@@ -514,7 +508,6 @@ def align_images_sift(images, aligned_indices, best_kps_num=5000, max_kps_num=50
       logger.debug("image has no descriptors")
       aligned_images.append(image)
       continue
-    kp, des = choose_best_keypoints(kp, des, max_kps_num)
     bf = cv2.BFMatcher()
     matches = bf.knnMatch(ref_des, des, k=2)
     good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
