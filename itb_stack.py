@@ -365,35 +365,49 @@ def log_homography_matrix(m):
                f"scale=({scale_x:.2f}, {scale_y:.2f}), angle={angle:.2f}°")
 
 
-def make_image_for_alignment(image, clip_limit):
+def make_image_for_alignment(image, clahe_clip_limit):
   """Make a byte-gray enhanced image for alignment."""
   gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
   byte_image = (np.clip(gray_image, 0, 1) * 255).astype(np.uint8)
   tile_grid_size = (8, 8)
-  if clip_limit > 0:
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+  if clahe_clip_limit > 0:
+    clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=tile_grid_size)
     byte_image = clahe.apply(byte_image)
   return np.clip(byte_image, 0, 255)
 
 
-def align_images_orb(images, aligned_indices):
+def align_images_orb(images, aligned_indices, nfeatures=5000):
   """Aligns images using ORB."""
   if len(images) < 2:
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
-  orb = cv2.ORB_create(nfeatures=5000)
-  ref_gray = make_image_for_alignment(ref_image, 2)
-  ref_kp, ref_des = orb.detectAndCompute(ref_gray, None)
-  if ref_des is None:
-    logger.debug(f"reference image has no descriptors")
+  check_results = []
+  clahe_clip_limits = [2.0, 4.0, 8.0]
+  for clahe_clip_limit in clahe_clip_limits:
+    ref_gray = make_image_for_alignment(ref_image, clahe_clip_limit)
+    orb = cv2.ORB_create(nfeatures=100000)
+    ref_kp, ref_des = orb.detectAndCompute(ref_gray, None)
+    if ref_des is None or len(ref_kp) < 10: continue
+    score = abs(math.log(nfeatures) - math.log(len(ref_kp)))
+    logger.debug(f"checking reference image:"
+                 f" clahe={clahe_clip_limit}, kp={len(ref_kp)}")
+    check_results.append((score, clahe_clip_limit, ref_gray))
+  if not check_results:
+    logger.debug("reference image has no descriptors")
     return images
-  logger.debug(f"detected {len(ref_kp)} key points in the reference")
+  check_results = sorted(check_results)
+  score, clahe_clip_limit, ref_gray = check_results[0]
+  orb = cv2.ORB_create(nfeatures=nfeatures)
+  ref_kp, ref_des = orb.detectAndCompute(ref_gray, None)
+  check_results = None
+  ref_grays = None
+  logger.debug(f"best config: clahe={clahe_clip_limit}, kp={len(ref_kp)}")
   aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
-    image_gray = make_image_for_alignment(image, 2)
+    image_gray = make_image_for_alignment(image, clahe_clip_limit)
     kp, des = orb.detectAndCompute(image_gray, None)
     if des is None:
       logger.debug(f"image has no descriptors")
@@ -460,17 +474,6 @@ def align_images_orb(images, aligned_indices):
   return cropped_images
 
 
-def choose_best_keypoints(keypoints, descriptors, limit):
-  """Chooses the best keypoints and their descriptors."""
-  sorted_kp_desc = sorted(zip(keypoints, descriptors), key=lambda x: x[0].response, reverse=True)
-  keypoints, descriptors = zip(*sorted_kp_desc)
-  keypoints = list(keypoints)
-  descriptors = np.array(descriptors)
-  keypoints = keypoints[:limit]
-  descriptors = descriptors[:limit]
-  return keypoints, descriptors
-
-
 def align_images_sift(images, aligned_indices, nfeatures=50000):
   """Aligns images using SIFT."""
   if len(images) < 2:
@@ -478,31 +481,31 @@ def align_images_sift(images, aligned_indices, nfeatures=50000):
   ref_image = images[0]
   h, w = ref_image.shape[:2]
   check_results = []
-  clip_limits = [2.0, 4.0, 8.0]
-  for clip_limit in clip_limits:
-    ref_gray = make_image_for_alignment(ref_image, clip_limit)
+  clahe_clip_limits = [2.0, 4.0, 8.0]
+  for clahe_clip_limit in clahe_clip_limits:
+    ref_gray = make_image_for_alignment(ref_image, clahe_clip_limit)
     sift = cv2.SIFT_create(nfeatures=0)
     ref_kp, ref_des = sift.detectAndCompute(ref_gray, None)
     if ref_des is None or len(ref_kp) < 10: continue
     score = abs(math.log(nfeatures) - math.log(len(ref_kp)))
     logger.debug(f"checking reference image:"
-                 f" clahe={clip_limit}, kp={len(ref_kp)}")
-    check_results.append((score, clip_limit, ref_gray))
+                 f" clahe={clahe_clip_limit}, kp={len(ref_kp)}")
+    check_results.append((score, clahe_clip_limit, ref_gray))
   if not check_results:
     logger.debug("reference image has no descriptors")
     return images
   check_results = sorted(check_results)
-  score, clip_limit, ref_gray = check_results[0]
+  score, clahe_clip_limit, ref_gray = check_results[0]
   sift = cv2.SIFT_create(nfeatures=nfeatures)
   ref_kp, ref_des = sift.detectAndCompute(ref_gray, None)
   check_results = None
   ref_grays = None
-  logger.debug(f"best config: clahe={clip_limit}, kp={len(ref_kp)}")
+  logger.debug(f"best config: clahe={clahe_clip_limit}, kp={len(ref_kp)}")
   aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
-    image_gray = make_image_for_alignment(image, clip_limit)
+    image_gray = make_image_for_alignment(image, clahe_clip_limit)
     kp, des = sift.detectAndCompute(image_gray, None)
     if des is None:
       logger.debug("image has no descriptors")
@@ -572,12 +575,13 @@ def align_images_ecc(images, aligned_indices):
     return images
   ref_image = images[0]
   h, w = ref_image.shape[:2]
-  ref_gray = make_image_for_alignment(ref_image, 4)
+  clahe_clip_limit = 4
+  ref_gray = make_image_for_alignment(ref_image, clahe_clip_limit)
   aligned_indices.add(0)
   aligned_images = [ref_image]
   bounding_boxes = []
   for image in images[1:]:
-    image_gray = make_image_for_alignment(image, 4)
+    image_gray = make_image_for_alignment(image, clahe_clip_limit)
     warp_matrix = np.eye(2, 3, dtype=np.float32)
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 1e-6)
     try:
