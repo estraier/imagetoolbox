@@ -457,14 +457,14 @@ def align_images_orb(images, aligned_indices, nfeatures=5000, denoise=2, shift_l
       logger.debug(f"not enough good matches in {len(matches)} matches")
       aligned_images.append(image)
   if bounding_boxes:
-    x_min = min(b[0] for b in bounding_boxes)
-    y_min = min(b[1] for b in bounding_boxes)
-    x_max = max(b[2] for b in bounding_boxes)
-    y_max = max(b[3] for b in bounding_boxes)
+    x_min = max(b[0] for b in bounding_boxes)
+    y_min = max(b[1] for b in bounding_boxes)
+    x_max = min(b[2] for b in bounding_boxes)
+    y_max = min(b[3] for b in bounding_boxes)
     x_min = np.clip(x_min, 0, w)
     y_min = np.clip(y_min, 0, h)
-    x_max = np.clip(x_max, 0, w)
-    y_max = np.clip(y_max, 0, h)
+    x_max = np.clip(x_max, x_min + 1, w)
+    y_max = np.clip(y_max, y_min + 1, h)
     crop_w = x_max - x_min
     crop_h = y_max - y_min
     aspect_ratio = w / h
@@ -486,7 +486,7 @@ def align_images_orb(images, aligned_indices, nfeatures=5000, denoise=2, shift_l
   return cropped_images
 
 
-def align_images_sift(images, aligned_indices, nfeatures=50000, denoise=2, shift_limit=0.1):
+def align_images_sift(images, aligned_indices, nfeatures=30000, denoise=2, shift_limit=0.1):
   """Aligns images using SIFT."""
   if len(images) < 2:
     return images
@@ -558,14 +558,14 @@ def align_images_sift(images, aligned_indices, nfeatures=50000, denoise=2, shift
       logger.debug(f"not enough good matches in {len(matches)} matches")
       aligned_images.append(image)
   if bounding_boxes:
-    x_min = min(b[0] for b in bounding_boxes)
-    y_min = min(b[1] for b in bounding_boxes)
-    x_max = max(b[2] for b in bounding_boxes)
-    y_max = max(b[3] for b in bounding_boxes)
+    x_min = max(b[0] for b in bounding_boxes)
+    y_min = max(b[1] for b in bounding_boxes)
+    x_max = min(b[2] for b in bounding_boxes)
+    y_max = min(b[3] for b in bounding_boxes)
     x_min = np.clip(x_min, 0, w)
     y_min = np.clip(y_min, 0, h)
-    x_max = np.clip(x_max, 0, w)
-    y_max = np.clip(y_max, 0, h)
+    x_max = np.clip(x_max, x_min + 1, w)
+    y_max = np.clip(y_max, y_min + 1, h)
     crop_w = x_max - x_min
     crop_h = y_max - y_min
     aspect_ratio = w / h
@@ -628,6 +628,10 @@ def align_images_ecc(images, aligned_indices, use_affine=True, denoise=3):
     y_min = max(min(b[1] for b in bounding_boxes), 0)
     x_max = min(max(b[2] for b in bounding_boxes), w)
     y_max = min(max(b[3] for b in bounding_boxes), h)
+    x_min = np.clip(x_min, 0, w)
+    y_min = np.clip(y_min, 0, h)
+    x_max = np.clip(x_max, x_min + 1, w)
+    y_max = np.clip(y_max, y_min + 1, h)
     crop_w = x_max - x_min
     crop_h = y_max - y_min
     aspect_ratio = w / h
@@ -1062,19 +1066,40 @@ def convert_grayscale_image(image, name):
     gray_image = l
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
-  elif name in ["laplacian", "lap"]:
+  elif name in ["laplacian"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray_image = cv2.Laplacian(gray_image, cv2.CV_32F)
+    gray_image = normalize_edge_image(gray_image)
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
-  elif name in ["sobel", "sob"]:
+  elif name in ["sobel"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     sobel_x = cv2.Sobel(gray_image, cv2.CV_32F, 1, 0, ksize=3)
     sobel_y = cv2.Sobel(gray_image, cv2.CV_32F, 0, 1, ksize=3)
-    sobel_combined = cv2.magnitude(sobel_x, sobel_y)
-    gray_image = cv2.cvtColor(sobel_combined, cv2.COLOR_GRAY2BGR)
+    gray_image = cv2.magnitude(sobel_x, sobel_y)
+    gray_image = normalize_edge_image(gray_image)
+    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_image, 0, 1)
+  elif name in ["sharpness"]:
+    gray_image = compute_sharpness(image)
+    gray_image = normalize_edge_image(gray_image)
+    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
   raise ValueError(f"Unknown grayscale name: {name}")
+
+
+def normalize_edge_image(image):
+  """Normalized edge image to be [0,1]."""
+  image = np.abs(image)
+  mean = np.mean(image)
+  std = np.std(image) + 1e-20
+  image = (image - mean) / std
+  low_perc = 1
+  high_perc = 99
+  low_val = np.percentile(image, low_perc)
+  high_val = np.percentile(image, high_perc)
+  image = (image - low_val) / (high_val - low_val)
+  return np.clip(image, 0, 1).astype(np.float32)
 
 
 def bilateral_denoise_image(image, radius):
