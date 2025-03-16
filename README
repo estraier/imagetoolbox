@@ -156,6 +156,7 @@ The following merging methods are supported.
   - geomean (gm) : geometric mean composition, suitable for noise reduction
   - minimum (min) : minimum value composition, suitable for dynamic light sources
   - maximum (max) : maximum value composition, suitable for star trailing
+  - denoise (dn) : blurred geometric mean-based median composition, suitable for noise reduction
   - weighted (w) : weighted average composition, suitable for pseudo-STF
   - debevec (d) : Debevec's method, to create an HDR image, for a natural result
   - robertson (r) : Robertson's method, to create an HDR image, for the most recognizable shapes

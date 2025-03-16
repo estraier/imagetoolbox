@@ -718,6 +718,37 @@ def merge_images_maximum(images):
   return np.max(images, axis=0)
 
 
+def merge_images_denoise(images, threshold_factor=1.0, blur_radius=3):
+  """Merge images by blurred geometric mean-based medianb."""
+  images = np.stack(images, axis=3).astype(np.float32)
+  h, w, c, n = images.shape
+  ksize = math.ceil(2 * blur_radius) + 1
+  sigma_color = min(0.1 * math.sqrt(ksize), 0.5)
+  sigma_space = 14 * math.sqrt(ksize)
+  filtered_images = np.zeros_like(images, dtype=np.float32)
+  for i in range(n):
+    filtered_images[:, :, :, i] = cv2.bilateralFilter(
+      images[:, :, :, i].astype(np.float32), ksize, sigma_color, sigma_space)
+  smooth_image = np.exp(np.mean(np.log(np.clip(filtered_images, 1e-6, 1)), axis=3))
+  blurred = cv2.GaussianBlur(smooth_image, (ksize, ksize), 0)
+  smooth_image = cv2.addWeighted(smooth_image, 1.0, blurred, -0.5, 0)
+  smooth_image = np.clip(smooth_image, 0, 1)
+  log_c = np.log1p(smooth_image)
+  log_x = np.log1p(images)
+  d = np.abs(log_x - log_c[..., np.newaxis])
+  threshold = np.median(d, axis=-1, keepdims=True) * threshold_factor
+  valid_pixels = d <= threshold
+  valid_mask_combined = np.any(valid_pixels, axis=3, keepdims=True)
+  valid_pixels = np.logical_and(valid_pixels, valid_mask_combined)
+  def conditional_median(stack, valid_mask):
+    filtered_stack = np.where(valid_mask, stack, np.nan)
+    median_values = np.nanmedian(filtered_stack, axis=3)
+    median_values = np.nan_to_num(median_values, nan=np.median(stack, axis=3))
+    return median_values
+  result = conditional_median(images, valid_pixels)
+  return result
+
+
 def calculate_stf_weights(f_numbers):
   """Calculates weights for each F-numbers for STF."""
   blur_radii = 1 / np.array(f_numbers)
@@ -1586,7 +1617,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   scale_params = parse_scale_expression(args.scale)
   merge_name = merge_params["name"]
   is_hdr = False
-  if merge_name in ["average", "a"]:
+  if merge_name in ["average", "a", "mean"]:
     logger.info(f"Merging images by average composition")
     merged_image = merge_images_average(images)
   elif merge_name in ["median", "mdn"]:
@@ -1601,6 +1632,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif merge_name in ["maximum", "max"]:
     logger.info(f"Merging images by maximum composition")
     merged_image = merge_images_maximum(images)
+  elif merge_name in ["denoise", "dn", "bgmbm"]:
+    logger.info(f"Merging images by denoise composition")
+    merged_image = merge_images_denoise(images)
   elif merge_name in ["weighted", "w"]:
     logger.info(f"Merging images by weighted average composition")
     merged_image = merge_images_weighted_average(images, meta_list)
