@@ -762,7 +762,7 @@ def merge_images_denoise(images, threshold_factor=1.0, blur_radius=3):
   def conditional_median(stack, valid_mask):
     filtered_stack = np.where(valid_mask, stack, np.nan)
     median_values = np.nanmedian(filtered_stack, axis=3)
-    median_values = np.nan_to_num(median_values, nan=np.median(stack, axis=3))
+    median_values = np.where(np.isnan(median_values), smooth_image, median_values)
     return median_values
   result = conditional_median(images, valid_pixels)
   return result
