@@ -1028,7 +1028,7 @@ def desaturate_colors_image(image, factor):
 
 def convert_grayscale_image(image, name):
   """Converts the image into grayscale."""
-  confs = [(("bt601", "601"), (0.299, 0.587, 0.114)),
+  confs = [(("bt601", "601", "gray"), (0.299, 0.587, 0.114)),
            (("bt709", "709"), (0.2126, 0.7152, 0.0722)),
            (("bt2020", "2020"), (0.2627, 0.6780, 0.0593)),
            (("red", "r"), (1.0, 0.41, 0.08)),
