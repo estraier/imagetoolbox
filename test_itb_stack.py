@@ -20,7 +20,8 @@ from itb_stack import (
   lighten_image, darken_image, sigmoidal_contrast_image, inverse_sigmoidal_contrast_image,
   adjust_exposure,
   align_images_orb, align_images_sift, align_images_ecc,
-  merge_images_average, merge_images_median, merge_images_minimum, merge_images_maximum,
+  merge_images_average, merge_images_median, merge_images_geometric_mean,
+  merge_images_minimum, merge_images_maximum,
   merge_images_weighted_average,
   merge_images_debevec, merge_images_robertson, merge_images_mertens,
   merge_images_focus_stacking, merge_images_grid, merge_images_stitch,
@@ -210,6 +211,11 @@ class TestItbStack(unittest.TestCase):
   def test_merge_images_median(self):
     images = [generate_test_image(shift=(i, i)) for i in range(10)]
     merged = merge_images_median(images)
+    self.assertEqual(merged.shape, images[0].shape)
+
+  def test_merge_images_geometric_mean(self):
+    images = [generate_test_image(shift=(i, i)) for i in range(10)]
+    merged = merge_images_geometric_mean(images)
     self.assertEqual(merged.shape, images[0].shape)
 
   def test_merge_images_minimum(self):

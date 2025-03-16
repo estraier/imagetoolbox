@@ -151,8 +151,9 @@ The workflow of this command is the following.
 
 The following merging methods are supported.
 
-  - average (a) : average composition (default)
+  - average (a) : average (arithmetic mean) composition (default)
   - median (mdn) : median composition, suitable for noise reduction
+  - geomean (gm) : geometric mean composition, suitable for noise reduction
   - minimum (min) : minimum value composition, suitable for dynamic light sources
   - maximum (max) : maximum value composition, suitable for star trailing
   - weighted (w) : weighted average composition, suitable for pseudo-STF

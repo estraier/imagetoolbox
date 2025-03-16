@@ -375,7 +375,9 @@ def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
   gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
   if denoise > 0:
     ksize = math.ceil(2 * denoise) + 1
-    gray_image = cv2.bilateralFilter(gray_image, denoise, 30, 30)
+    sigma_color = min(0.05 * math.sqrt(ksize), 0.35)
+    sigma_space = 10 * math.sqrt(ksize)
+    gray_image = cv2.bilateralFilter(gray_image, denoise, sigma_color, sigma_space)
   byte_image = (np.clip(gray_image, 0, 1) * 255).astype(np.uint8)
   tile_grid_size = (8, 8)
   if clahe_clip_limit > 0:
@@ -699,6 +701,11 @@ def merge_images_average(images):
 def merge_images_median(images):
   """Merges images by median composition."""
   return np.median(images, axis=0)
+
+
+def merge_images_geometric_mean(images):
+  """Merges images by geoemtric_mean composition."""
+  return np.exp(np.mean(np.log(np.clip(images, 1e-6, 1)), axis=0))
 
 
 def merge_images_minimum(images):
@@ -1133,18 +1140,8 @@ def normalize_edge_image(image):
 def bilateral_denoise_image(image, radius):
   """Applies bilateral denoise."""
   ksize = math.ceil(2 * radius) + 1
-  if ksize <= 5:
-    sigma_color = 25
-    sigma_space = 25
-  elif ksize <= 7:
-    sigma_color = 50
-    sigma_space = 50
-  elif ksize <= 9:
-    sigma_color = 75
-    sigma_space = 75
-  else:
-    sigma_color = 15
-    sigma_space = 150
+  sigma_color = min(0.05 * math.sqrt(ksize), 0.35)
+  sigma_space = 10 * math.sqrt(ksize)
   return cv2.bilateralFilter(image, ksize, sigma_color, sigma_space)
 
 
@@ -1595,6 +1592,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif merge_name in ["median", "mdn"]:
     logger.info(f"Merging images by median composition")
     merged_image = merge_images_median(images)
+  elif merge_name in ["geomean", "gm"]:
+    logger.info(f"Merging images by geometric mean composition")
+    merged_image = merge_images_geometric_mean(images)
   elif merge_name in ["minimum", "min"]:
     logger.info(f"Merging images by minimum composition")
     merged_image = merge_images_minimum(images)
