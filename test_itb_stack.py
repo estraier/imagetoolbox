@@ -118,6 +118,20 @@ class TestItbStack(unittest.TestCase):
     loaded_image, bits = load_image(path)
     self.assertEqual(image.shape, loaded_image.shape)
 
+  def test_save_and_load_image_png(self):
+    image = generate_test_image()
+    path = os.path.join(self.temp_path, "test_image.png")
+    save_image(path, image, 16)
+    loaded_image, bits = load_image(path)
+    self.assertEqual(image.shape, loaded_image.shape)
+
+  def test_save_and_load_image_webp(self):
+    image = generate_test_image()
+    path = os.path.join(self.temp_path, "test_image.webp")
+    save_image(path, image, 8)
+    loaded_image, bits = load_image(path)
+    self.assertEqual(image.shape, loaded_image.shape)
+
   @patch("cv2.VideoCapture")
   def test_load_video_mock(self, mock_video_capture):
     mock_cap = MagicMock()
