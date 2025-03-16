@@ -883,6 +883,34 @@ def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
   return np.clip(stacked_image, 0, 1)
 
 
+def merge_images_grid(images, columns=1, margin=0, background=(0.5, 0.5, 0.5)):
+  """Merges images in a grid."""
+  num_images = len(images)
+  rows = (num_images + columns - 1) // columns
+  widths = [0] * columns
+  heights = [0] * rows
+  for i, img in enumerate(images):
+    row, col = divmod(i, columns)
+    h, w = img.shape[:2]
+    widths[col] = max(widths[col], w)
+    heights[row] = max(heights[row], h)
+  grid_width = sum(widths) + (columns + 1) * margin
+  grid_height = sum(heights) + (rows + 1) * margin
+  output = np.full((grid_height, grid_width, 3), background, dtype=np.float32)
+  y_offset = margin
+  for row in range(rows):
+    x_offset = margin
+    for col in range(columns):
+      idx = row * columns + col
+      if idx >= num_images:
+        continue
+      h, w = images[idx].shape[:2]
+      output[y_offset:y_offset+h, x_offset:x_offset+w] = images[idx]
+      x_offset += widths[col] + margin
+    y_offset += heights[row] + margin
+  return output
+
+
 def merge_images_stitch(images):
   """Stitches images as a panoramic photo and removes black margins."""
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8) for image in images]
@@ -1193,6 +1221,33 @@ def scale_image(image, width, height):
   return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
 
 
+def parse_color_expr(expr):
+  """Parses a color expression and returns a R, G, B tuple."""
+  expr = expr.strip().lower()
+  named_colors = {
+    "black": "#000000", "white": "#FFFFFF",
+    "red": "#FF0000", "green": "#008000", "blue": "#0000FF",
+    "yellow": "#FFFF00", "cyan": "#00FFFF", "magenta": "#FF00FF",
+    "gray": "#808080", "silver": "#C0C0C0", "maroon": "#800000",
+    "olive": "#808000", "lime": "#00FF00", "teal": "#008080",
+    "navy": "#000080", "fuchsia": "#FF00FF", "aqua": "#00FFFF",
+    "purple": "#800080", "orange": "#FFA500"
+  }
+  if expr in named_colors:
+    expr = named_colors[expr]
+  match = re.fullmatch(r"#?([0-9a-fA-F]{3,6})", expr)
+  if match:
+    expr = match.group(1)
+    if len(expr) == 3:
+      r, g, b = (int(expr[0] * 2, 16), int(expr[1] * 2, 16),
+                 int(expr[2] * 2, 16))
+      return r, g, b
+    elif len(expr) == 6:
+      r, g, b = (int(expr[0:2], 16), int(expr[2:4], 16), int(expr[4:6], 16))
+      return r, g, b
+  return None
+
+
 def write_caption(image, capexpr):
   """Write a text on an image."""
   h, w = image.shape[:2]
@@ -1208,14 +1263,9 @@ def write_caption(image, capexpr):
   thickness = max(1, int(font_scale))
   r, g, b = (255, 255, 255)
   if len(fields) > 2:
-    match = re.fullmatch(r" *#?([0-9a-fA-F]{3,6}) *", fields[2])
-    if match:
-      expr = match.group(1)
-      if len(expr) == 3:
-        (r, g, b) = (int(expr[0] * 2, 16), int(expr[1] * 2, 16),
-                     int(expr[2] * 2, 16))
-      elif len(expr) == 6:
-        (r, g, b) = (int(expr[0:2], 16), int(expr[2:4], 16), int(expr[4:6], 16))
+    color = parse_color_expr(fields[2])
+    if color:
+      r, g, b = color
   r, g, b = float(r) / 255, float(g) / 255, float(b) / 255
   font_color = (b, g, r)
   line_type = cv2.LINE_AA
@@ -1242,7 +1292,7 @@ def write_caption(image, capexpr):
   return image
 
 
-def parse_align_expression(expr):
+def parse_name_opts_expression(expr):
   """Parses alignment expression and returns key-value map."""
   fields = re.split(r'[ ,\|:;]+', expr.strip())
   params = {"name": fields[0]}
@@ -1353,7 +1403,7 @@ def main():
   ap.add_argument("--merge", "-m", default="average", metavar="name",
                   help="Choose a processing method for merging:"
                   " average (default), median, max, min, weighted,"
-                  " debevec, robertson, mertens, focus, stitch")
+                  " debevec, robertson, mertens, focus, grid, stitch")
   ap.add_argument("--tonemap", "-t", default="linear", metavar="name",
                   help="Choose a tone mapping method for debevec:"
                   " linear (default), reinhard, drago, mantiuk")
@@ -1417,7 +1467,7 @@ def main():
     logger.info(f"Adjusting input exposure to the mean")
     images = [adjust_exposure(image, mean_brightness) for image in images]
   aligned_indices = set()
-  align_params = parse_align_expression(args.align)
+  align_params = parse_name_opts_expression(args.align)
   align_name = align_params["name"]
   if align_name in ["none", ""]:
     pass
@@ -1533,41 +1583,55 @@ def log_image_stats(image, prefix):
 
 def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   """Postprocess images as a merged image."""
+  merge_params = parse_name_opts_expression(args.merge)
   trim_params = parse_trim_expression(args.trim)
   pers_params = parse_pers_expression(args.pers)
   scale_params = parse_scale_expression(args.scale)
+  merge_name = merge_params["name"]
   is_hdr = False
-  if args.merge in ["average", "a"]:
+  if merge_name in ["average", "a"]:
     logger.info(f"Merging images by average composition")
     merged_image = merge_images_average(images)
-  elif args.merge in ["median", "mdn"]:
+  elif merge_name in ["median", "mdn"]:
     logger.info(f"Merging images by median composition")
     merged_image = merge_images_median(images)
-  elif args.merge in ["minimum", "min"]:
+  elif merge_name in ["minimum", "min"]:
     logger.info(f"Merging images by minimum composition")
     merged_image = merge_images_minimum(images)
-  elif args.merge in ["maximum", "max"]:
+  elif merge_name in ["maximum", "max"]:
     logger.info(f"Merging images by maximum composition")
     merged_image = merge_images_maximum(images)
-  elif args.merge in ["weighted", "w"]:
+  elif merge_name in ["weighted", "w"]:
     logger.info(f"Merging images by weighted average composition")
     merged_image = merge_images_weighted_average(images, meta_list)
-  elif args.merge in ["debevec", "d"]:
+  elif merge_name in ["debevec", "d"]:
     logger.info(f"Merging images by Debevec's method as an HDRI")
     merged_image = merge_images_debevec(images, meta_list)
     is_hdr = True
-  elif args.merge in ["robertson", "r"]:
+  elif merge_name in ["robertson", "r"]:
     logger.info(f"Merging images by Robertson's method")
     merged_image = merge_images_robertson(images, meta_list)
     is_hdr = True
-  elif args.merge in ["mertens", "m"]:
+  elif merge_name in ["mertens", "m"]:
     logger.info(f"Merging images by Mertens's method")
     merged_image = merge_images_mertens(images)
     is_hdr = True
-  elif args.merge in ["focus", "f"]:
+  elif merge_name in ["focus", "f"]:
     logger.info(f"Merging images by focus stacking")
     merged_image = merge_images_focus_stacking(images)
-  elif args.merge in ["stitch", "s"]:
+  elif merge_name in ["grid", "g"]:
+    logger.info(f"Merging images in a grid")
+    kwargs = {}
+    if "columns" in merge_params:
+      kwargs["columns"] = int(merge_params["columns"])
+    if "margin" in merge_params:
+      kwargs["margin"] = int(merge_params["margin"])
+    if "background" in merge_params:
+      color = parse_color_expr(merge_params["background"])
+      if color:
+        kwargs["background"] = (color[0] / 255, color[1] / 255, color[2] / 255)
+    merged_image = merge_images_grid(images, **kwargs)
+  elif merge_name in ["stitch", "s"]:
     logger.info(f"Stitching images as a panoramic photo")
     merged_image = merge_images_stitch(images)
   else:

@@ -23,7 +23,7 @@ from itb_stack import (
   merge_images_average, merge_images_median, merge_images_minimum, merge_images_maximum,
   merge_images_weighted_average,
   merge_images_debevec, merge_images_robertson, merge_images_mertens,
-  merge_images_focus_stacking, merge_images_stitch,
+  merge_images_focus_stacking, merge_images_grid, merge_images_stitch,
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
   fill_black_margin_image,
   apply_global_histeq_image, apply_clahe_image,
@@ -271,6 +271,17 @@ class TestItbStack(unittest.TestCase):
     images = [generate_test_image() for _ in range(3)]
     merged = merge_images_focus_stacking(images)
     self.assertEqual(merged.shape, images[0].shape)
+
+  def test_merge_images_grid(self):
+    image = generate_test_image()
+    left, right = split_image_vertically(image)
+    l1, l2 = split_image_vertically(left)
+    r1, r2 = split_image_vertically(right)
+    images = [l1, l2, r1, r2]
+    merged = merge_images_grid(images, 4)
+    self.assertEqual(merged.shape[2], images[0].shape[2])
+    merged = merge_images_grid(images, 2, 10, (0.5, 0.8, 0.2))
+    self.assertEqual(merged.shape[2], images[0].shape[2])
 
   def test_merge_images_stitch(self):
     image = generate_test_image()

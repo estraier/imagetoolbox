@@ -88,6 +88,10 @@ using ECC aligner is sometimes better than SIFT.
 
   $ itb_stack.py input*.jpg -o output.jpg -m f -nr -a e
 
+Putting images in a grid is also supported.  You specify the number of columns.
+
+  $ itb_stack.py input*.jpg -o output.jpg -m grid:columns=2:margin=10:background=ff0
+
 Stitching images as a panoramic image is also supported.  "-fm" fills the black margin.
 
   $ itb_stack.py input*.jpg -o output.jpg -m s -nr -fm
@@ -156,6 +160,7 @@ The following merging methods are supported.
   - robertson (r) : Robertson's method, to create an HDR image, for the most recognizable shapes
   - mergens (m) : Mergen's method, to create a pseudo-HDR image by blending
   - focus (f) : focus stacking using Laplacian filter
+  - grid (g) : to create a grid of images
   - stitch (s) : to create a panoramic image
 
 Debevec, Robertson, and Mergen support tone mapping for post-processing.  The following methods
