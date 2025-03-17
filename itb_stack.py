@@ -737,7 +737,7 @@ def merge_images_maximum(images):
   return np.max(images, axis=0)
 
 
-def merge_images_denoise(images, threshold_factor=1.0, blur_radius=3):
+def merge_images_denoise(images, clip_limit=0.4, blur_radius=3):
   """Merge images by blurred geometric mean-based median."""
   images = np.stack(images, axis=3).astype(np.float32)
   h, w, c, n = images.shape
@@ -750,19 +750,25 @@ def merge_images_denoise(images, threshold_factor=1.0, blur_radius=3):
       images[:, :, :, i].astype(np.float32), ksize, sigma_color, sigma_space)
   smooth_image = np.exp(np.mean(np.log(np.clip(filtered_images, 1e-6, 1)), axis=3))
   blurred = cv2.GaussianBlur(smooth_image, (ksize, ksize), 0)
-  smooth_image = cv2.addWeighted(smooth_image, 1.0, blurred, -0.5, 0)
+  smooth_image = cv2.addWeighted(smooth_image, 1.8, blurred, -0.8, 0)
   smooth_image = np.clip(smooth_image, 0, 1)
+  gray_image = cv2.cvtColor(smooth_image, cv2.COLOR_BGR2GRAY)
+  sobel_x = np.abs(cv2.Sobel(gray_image, cv2.CV_32F, 1, 0, ksize=3))
+  sobel_y = np.abs(cv2.Sobel(gray_image, cv2.CV_32F, 0, 1, ksize=3))
+  sobel_e = np.sqrt(sobel_x**2 + sobel_y**2)
+  edge_score = z_score_normalization(sobel_e)
   log_c = np.log1p(smooth_image)
   log_x = np.log1p(images)
-  d = np.abs(log_x - log_c[..., np.newaxis])
-  threshold = np.median(d, axis=-1, keepdims=True) * threshold_factor
-  valid_pixels = d <= threshold
-  valid_mask_combined = np.any(valid_pixels, axis=3, keepdims=True)
-  valid_pixels = np.logical_and(valid_pixels, valid_mask_combined)
+  dist = np.abs(log_x - log_c[..., np.newaxis])
+  dist_score = z_score_normalization(dist)
+  total_score = edge_score[..., np.newaxis, np.newaxis] - dist_score
+  threshold_value = np.percentile(total_score, clip_limit * 100)
+  valid_pixels = total_score >= threshold_value
   def conditional_median(stack, valid_mask):
     filtered_stack = np.where(valid_mask, stack, np.nan)
+    nan_mask = np.all(np.isnan(filtered_stack), axis=3, keepdims=True)
+    filtered_stack = np.where(nan_mask, np.expand_dims(smooth_image, axis=3), filtered_stack)
     median_values = np.nanmedian(filtered_stack, axis=3)
-    median_values = np.where(np.isnan(median_values), smooth_image, median_values)
     return median_values
   result = conditional_median(images, valid_pixels)
   return result
@@ -1449,7 +1455,7 @@ def main():
                   help="Ignore unaligned images")
   ap.add_argument("--merge", "-m", default="average", metavar="name",
                   help="Choose a processing method for merging:"
-                  " average (default), median, max, min, weighted,"
+                  " average (default), median, geomean, maximum, minimum, denoise, weighted,"
                   " debevec, robertson, mertens, focus, grid, stitch")
   ap.add_argument("--tonemap", "-t", default="linear", metavar="name",
                   help="Choose a tone mapping method for debevec:"
@@ -1653,7 +1659,12 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     merged_image = merge_images_maximum(images)
   elif merge_name in ["denoise", "dn", "bgmbm"]:
     logger.info(f"Merging images by denoise composition")
-    merged_image = merge_images_denoise(images)
+    kwargs = {}
+    if "clip_limit" in merge_params:
+      kwargs["clip_limit"] = float(merge_params["clip_limit"])
+    if "blur_radius" in merge_params:
+      kwargs["blur_radius"] = int(merge_params["blur_radius"])
+    merged_image = merge_images_denoise(images, **kwargs)
   elif merge_name in ["weighted", "w"]:
     logger.info(f"Merging images by weighted average composition")
     merged_image = merge_images_weighted_average(images, meta_list)
