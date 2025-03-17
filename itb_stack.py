@@ -719,7 +719,7 @@ def merge_images_maximum(images):
 
 
 def merge_images_denoise(images, threshold_factor=1.0, blur_radius=3):
-  """Merge images by blurred geometric mean-based medianb."""
+  """Merge images by blurred geometric mean-based median."""
   images = np.stack(images, axis=3).astype(np.float32)
   h, w, c, n = images.shape
   ksize = math.ceil(2 * blur_radius) + 1
