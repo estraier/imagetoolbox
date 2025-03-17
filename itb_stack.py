@@ -40,7 +40,8 @@ PROG_NAME = "itb_stack.py"
 PROG_VERSION = "0.0.2"
 CMD_EXIFTOOL = "exiftool"
 CMD_HUGIN_ALIGN = "align_image_stack"
-EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif"]
+EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"]
+EXTS_IMAGE_EXIF = [".jpg", ".jpeg", ".tiff", ".tif", ".webp"]
 EXTS_VIDEO = [".mp4", ".mov"]
 
 
@@ -95,7 +96,7 @@ def save_image(file_path, image, bits):
   logger.debug(f"saving image: {file_path}")
   image = linear_to_srgb(image)
   ext = os.path.splitext(file_path)[1].lower()
-  if ext in [".jpg", ".jpeg"]:
+  if ext in [".jpg", ".jpeg", ".webp"]:
     image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
   elif ext in [".png", ".tiff", ".tif"]:
     if bits == 32:
@@ -201,9 +202,27 @@ def parse_numeric(text):
 def get_metadata(path):
   """Gets Exif data from a image file."""
   meta = {}
+  if has_command(CMD_EXIFTOOL):
+    ext = os.path.splitext(path)[1].lower()
+    if ext in EXTS_IMAGE_EXIF:
+      cmd = ["exiftool", "-s", "-t", "-n", path]
+      logger.debug(f"running: {' '.join(cmd)}")
+      content = subprocess.check_output(
+        cmd, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      lines = content.decode("utf-8", "ignore").split("\n")
+      for line in lines:
+        fields = line.strip().split("\t", 1)
+        if len(fields) < 2: continue
+        name, value = fields[:2]
+        if name == "ExposureTime":
+          meta["_tv_"] = parse_numeric(str(value))
+        if name == "FNumber":
+          meta["_fv_"] = parse_numeric(str(value))
+        if name == "ISO":
+          meta["_sv_"] = parse_numeric(str(value))
   try:
     ext = os.path.splitext(path)[1].lower()
-    if ext in [".jpg", ".tiff", ".tif"]:
+    if ext in EXTS_IMAGE_EXIF:
       with open(path, "rb") as f:
         tags = exifread.process_file(f)
         for name, value in tags.items():
@@ -235,8 +254,8 @@ def copy_metadata(source_path, target_path):
   cmd = ["exiftool", "-TagsFromFile", source_path, "-icc_profile",
          "-thumbnailimage=", "-f", "-m", "-overwrite_original", target_path]
   logger.debug(f"running: {' '.join(cmd)}")
-  subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
-                 stderr=subprocess.DEVNULL)
+  subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def srgb_to_linear(image):
@@ -674,7 +693,7 @@ def align_images_hugin(images, input_paths, bits_list):
     save_image(align_input_path, image, bits)
     cmd.append(align_input_path)
   logger.debug(f"running: {' '.join(cmd)}")
-  subprocess.run(cmd, check=True,
+  subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
   for align_input_path in align_input_paths:
     os.remove(align_input_path)
@@ -743,7 +762,7 @@ def merge_images_denoise(images, threshold_factor=1.0, blur_radius=3):
   def conditional_median(stack, valid_mask):
     filtered_stack = np.where(valid_mask, stack, np.nan)
     median_values = np.nanmedian(filtered_stack, axis=3)
-    median_values = np.nan_to_num(median_values, nan=np.median(stack, axis=3))
+    median_values = np.where(np.isnan(median_values), smooth_image, median_values)
     return median_values
   result = conditional_median(images, valid_pixels)
   return result
