@@ -277,6 +277,24 @@ def compute_brightness(image):
   return np.mean(cv2.cvtColor(image.astype(np.float32), cv2.COLOR_BGR2GRAY))
 
 
+def apply_gamma_image(image, gamma):
+  """Adjusts image brightness by a gamma transformation."""
+  if gamma < 1e-6:
+    return image
+  image = np.power(image, 1 / gamma)
+  return image.astype(np.float32)
+
+
+def apply_scaled_log_image(image, factor):
+  """Adjust image brightness by a scaled log transformation."""
+  if factor > 1e-6:
+    image = np.log1p(image * factor) / np.log1p(factor)
+  elif factor < 1e-6:
+    factor = -factor
+    image = (np.expm1(image * np.log1p(factor))) / factor
+  return image.astype(np.float32)
+
+
 def lighten_image(image, factor):
   """Lightens the image by applying a scaled log transformation."""
   if factor < 1e-6:
@@ -321,6 +339,22 @@ def inverse_sigmoidal_contrast_image(image, gain, mid):
   max_val = naive_inverse_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
   return np.clip((naive_inverse_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
+
+
+def apply_sigmoid_image(image, gain, mid):
+  """Adjust image brightness by a sigmoid transformation."""
+  if gain > 1e-6:
+    min_val = naive_sigmoid(0.0, gain, mid)
+    max_val = naive_sigmoid(1.0, gain, mid)
+    diff = max_val - min_val
+    image = (naive_sigmoid(image, gain, mid) - min_val) / diff
+  elif gain < 1e-6:
+    gain = -gain
+    min_val = naive_inverse_sigmoid(0.0, gain, mid)
+    max_val = naive_inverse_sigmoid(1.0, gain, mid)
+    diff = max_val - min_val
+    image = (naive_inverse_sigmoid(image, gain, mid) - min_val) / diff
+  return np.clip(image, 0, 1).astype(np.float32)
 
 
 def adjust_exposure(image, target_brightness):
@@ -1278,13 +1312,13 @@ def parse_color_expr(expr):
   """Parses a color expression and returns a R, G, B tuple."""
   expr = expr.strip().lower()
   named_colors = {
-    "black": "#000000", "white": "#FFFFFF",
-    "red": "#FF0000", "green": "#008000", "blue": "#0000FF",
-    "yellow": "#FFFF00", "cyan": "#00FFFF", "magenta": "#FF00FF",
-    "gray": "#808080", "silver": "#C0C0C0", "maroon": "#800000",
-    "olive": "#808000", "lime": "#00FF00", "teal": "#008080",
-    "navy": "#000080", "fuchsia": "#FF00FF", "aqua": "#00FFFF",
-    "purple": "#800080", "orange": "#FFA500"
+    "black": "#000000", "white": "#ffffff",
+    "red": "#ff0000", "green": "#008000", "blue": "#0000ff",
+    "yellow": "#ffff00", "cyan": "#00ffff", "magenta": "#ff00ff",
+    "gray": "#808080", "silver": "#c0c0c0", "maroon": "#800000",
+    "olive": "#808000", "lime": "#00ff00", "teal": "#008080",
+    "navy": "#000080", "fuchsia": "#ff00ff", "aqua": "#00ffff",
+    "purple": "#800080", "orange": "#ffa500"
   }
   if expr in named_colors:
     expr = named_colors[expr]
@@ -1464,6 +1498,9 @@ def main():
                   help="do not apply auto restoration of brightness")
   ap.add_argument("--fill-margin", "-fm", action='store_true',
                   help="fill black marin with the color of nearest pixels")
+  ap.add_argument("--gamma", type=float, default=1.0, metavar="num",
+                  help="gamma brightness adjustment."
+                  " less than 1.0 to darken, less than 1.0 to lighten")
   ap.add_argument("--slog", type=float, default=0, metavar="num",
                   help="scaled log brightness adjustment."
                   " positive to lighten, negative to darken")
@@ -1727,18 +1764,15 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   if args.fill_margin:
     logger.info(f"Filling the margin")
     merged_image = fill_black_margin_image(merged_image)
-  if args.slog > 0:
-    logger.info(f"Lightening brightness")
-    merged_image = lighten_image(merged_image, args.slog)
-  elif args.slog < 0:
-    logger.info(f"Darkening brightness")
-    merged_image = darken_image(merged_image, -args.slog)
-  if args.sigmoid > 0:
-    logger.info(f"Strenghenining the contrast")
-    merged_image = sigmoidal_contrast_image(merged_image, args.sigmoid, 0.5)
-  elif args.sigmoid < 0:
-    logger.info(f"Weakening the contrast")
-    merged_image = inverse_sigmoidal_contrast_image(merged_image, -args.sigmoid, 0.5)
+  if args.gamma != 1.0 and args.gamma > 0:
+    logger.info(f"Adjust brightness by a gamma")
+    merged_image = apply_gamma_image(merged_image, args.gamma)
+  if args.slog != 0:
+    logger.info(f"Adjust brightness by a scaled log")
+    merged_image = apply_scaled_log_image(merged_image, args.slog)
+  if args.sigmoid != 0:
+    logger.info(f"Adjust brightness by a sigmoid")
+    merged_image = apply_sigmoid_image(merged_image, args.sigmoid, 0.5)
   if args.histeq > 0:
     logger.info(f"Applying CLAHE enhancement")
     merged_image = apply_clahe_image(merged_image, args.histeq)

@@ -16,8 +16,7 @@ import cv2
 from itb_stack import (
   set_logging_level,
   load_image, save_image, load_video, save_video,
-  compute_brightness,
-  lighten_image, darken_image, sigmoidal_contrast_image, inverse_sigmoidal_contrast_image,
+  compute_brightness, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   adjust_exposure,
   align_images_orb, align_images_sift, align_images_ecc,
   merge_images_average, merge_images_median, merge_images_geometric_mean,
@@ -177,24 +176,34 @@ class TestItbStack(unittest.TestCase):
     brightness = compute_brightness(image)
     self.assertTrue(0 <= brightness <= 1)
 
-  def test_lighten_image(self):
-    image = generate_test_image() * 2
-    processed = lighten_image(image, 1)
+  def test_apply_gamma_image_lighten(self):
+    image = generate_test_image()
+    processed = apply_gamma_image(image, 2.2)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_darken_image(self):
-    image = generate_test_image() * 2
-    processed = darken_image(image, 1)
+  def test_apply_gamma_image_lighten(self):
+    image = generate_test_image()
+    processed = apply_gamma_image(image, 1 / 2.2)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_sigmoidal_contrast_image(self):
-    image = generate_test_image() * 2
-    processed = sigmoidal_contrast_image(image, 1, 0.5)
+  def test_apply_scaled_log_image_lighten(self):
+    image = generate_test_image()
+    processed = apply_scaled_log_image(image, 1)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_inverse_sigmoidal_contrast_image(self):
-    image = generate_test_image() * 2
-    processed = inverse_sigmoidal_contrast_image(image, 1, 0.5)
+  def test_apply_scaled_log_image_darken(self):
+    image = generate_test_image()
+    processed = apply_scaled_log_image(image, -1)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_sigmoidal_image_lighten(self):
+    image = generate_test_image()
+    processed = apply_sigmoid_image(image, 1, 0.5)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_sigmoidal_image_darken(self):
+    image = generate_test_image()
+    processed = apply_sigmoid_image(image, -1, 0.5)
     self.assertEqual(processed.shape, image.shape)
 
   def test_adjust_exposure(self):
