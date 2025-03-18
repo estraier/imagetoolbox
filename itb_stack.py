@@ -348,7 +348,7 @@ def apply_sigmoid_image(image, gain, mid):
     max_val = naive_sigmoid(1.0, gain, mid)
     diff = max_val - min_val
     image = (naive_sigmoid(image, gain, mid) - min_val) / diff
-  elif gain < 1e-6:
+  elif gain < -1e-6:
     gain = -gain
     min_val = naive_inverse_sigmoid(0.0, gain, mid)
     max_val = naive_inverse_sigmoid(1.0, gain, mid)
@@ -1138,25 +1138,19 @@ def apply_clahe_image(image, clip_limit, gamma=2.2, restore_color=True):
 
 def saturate_colors_image(image, factor):
   """Saturates colors of the image by applying a scaled log transformation."""
-  if factor < 1e-6:
-    return image
-  hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-  h, s, v = cv2.split(hsv)
-  s = (np.log1p(s * factor) / np.log1p(factor)).astype(np.float32)
-  hsv = cv2.merge((h, s, v))
-  mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-  return mod_image.astype(np.float32)
-
-
-def desaturate_colors_image(image, factor):
-  """Desaturates colors of the image by applying an inverse scaled log transformation."""
-  if factor < 1e-6:
-    return image
-  hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-  h, s, v = cv2.split(hsv)
-  s = ((np.expm1(s * np.log1p(factor))) / factor).astype(np.float32)
-  hsv = cv2.merge((h, s, v))
-  mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+  if factor > 1e-6:
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    s = (np.log1p(s * factor) / np.log1p(factor)).astype(np.float32)
+    hsv = cv2.merge((h, s, v))
+    mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+  elif factor < -1e-6:
+    factor = -factor
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    s = ((np.expm1(s * np.log1p(factor))) / factor).astype(np.float32)
+    hsv = cv2.merge((h, s, v))
+    mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
   return mod_image.astype(np.float32)
 
 
@@ -1788,12 +1782,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif args.histeq < 0:
     logger.info(f"Applying global HE enhancement")
     merged_image = apply_global_histeq_image(merged_image)
-  if args.saturate > 0:
+  if args.saturate != 0:
     logger.info(f"Saturating colors")
     merged_image = saturate_colors_image(merged_image, args.saturate)
-  elif args.saturate < 0:
-    logger.info(f"Desaturating colors")
-    merged_image = desaturate_colors_image(merged_image, -args.saturate)
   if args.gray:
     logger.info(f"Converting to grayscale")
     merged_image = convert_grayscale_image(merged_image, args.gray)

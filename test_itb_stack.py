@@ -27,7 +27,7 @@ from itb_stack import (
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
   fill_black_margin_image,
   apply_global_histeq_image, apply_clahe_image,
-  saturate_colors_image, desaturate_colors_image, convert_grayscale_image,
+  saturate_colors_image, convert_grayscale_image,
   bilateral_denoise_image, gaussian_blur_image, gaussian_unsharp_image,
   perspective_correct_image, trim_image, scale_image, write_caption,
 )
@@ -357,14 +357,14 @@ class TestItbStack(unittest.TestCase):
     processed = apply_clahe_image(image, 2)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_saturate_colors_image(self):
+  def test_saturate_colors_image_thicker(self):
     image = generate_test_image()
     processed = saturate_colors_image(image, 3)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_desaturate_colors_image(self):
+  def test_desaturate_colors_image_thinner(self):
     image = generate_test_image()
-    processed = desaturate_colors_image(image, 3)
+    processed = saturate_colors_image(image, -3)
     self.assertEqual(processed.shape, image.shape)
 
   def test_convert_grayscale_image(self):
