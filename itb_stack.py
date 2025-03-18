@@ -43,6 +43,7 @@ CMD_HUGIN_ALIGN = "align_image_stack"
 EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"]
 EXTS_IMAGE_EXIF = [".jpg", ".jpeg", ".tiff", ".tif", ".webp"]
 EXTS_VIDEO = [".mp4", ".mov"]
+EXTS_NPZ = [".npz"]
 
 
 logging.basicConfig(format="%(message)s", stream=sys.stderr)
@@ -113,7 +114,7 @@ def save_image(file_path, image, bits):
 
 
 def load_video(file_path, mem_allowance, input_fps):
-  """Loads images and returns their linear RGB data as a tuple of a NumPy array."""
+  """Loads images in video and returns their linear RGB data as a tuple of a NumPy array."""
   logger.debug(f"loading video: {file_path}")
   cap = cv2.VideoCapture(file_path)
   if not cap.isOpened():
@@ -172,6 +173,40 @@ def save_video(file_path, images, output_fps):
     uint8_image = (srgb_image * 255).astype(np.uint8)
     out.write(uint8_image)
   out.release()
+
+
+def load_npz(file_path, mem_allowance):
+  """Loads images in NPZ and returns their linear RGB data as a tuple of a NumPy array."""
+  logger.debug(f"loading NPZ: {file_path}")
+  npz_data = np.load(file_path)
+  frames = []
+  total_mem_usage = 0
+  for key in npz_data:
+    frame = npz_data[key]
+    if frame.dtype == np.uint32:
+      frame = frame.astype(np.float32) / float((1<<32) - 1)
+      bits = 32
+    elif frame.dtype == np.uint16:
+      frame = frame.astype(np.float32) / float((1<<16) - 1)
+      bits = 16
+    elif frame.dtype == np.uint8:
+      frame = frame.astype(np.float32) / float((1<<8) - 1)
+      bits = 8
+    elif frame.dtype == np.float32:
+      bits = 16
+    frame_mem_size = estimate_image_memory_size(frame)
+    if total_mem_usage + frame_mem_size > mem_allowance:
+      logger.warning(f"Memory limit reached while processing")
+      break
+    frames.append((frame, bits))
+    total_mem_usage += frame_mem_size
+  return frames
+
+
+def save_npz(file_path, images):
+  """Saves an NPZ archive file of images."""
+  logger.debug(f"saving NPZ: {file_path}")
+  np.savez_compressed(file_path, *images)
 
 
 def estimate_image_memory_size(image):
@@ -1608,7 +1643,9 @@ def main():
       if len(images) != old_num:
         logger.debug(f"{old_num - len(images)} of {old_num} images are removed")
   ext = os.path.splitext(args.output)[1].lower()
-  if ext in EXTS_VIDEO:
+  if ext in EXTS_NPZ:
+    postprocess_npz(args, images)
+  elif ext in EXTS_VIDEO:
     postprocess_video(args, images)
   elif ext in EXTS_IMAGE:
     postprocess_images(args, images, bits_list, meta_list, mean_brightness)
@@ -1626,7 +1663,14 @@ def load_input_images(args):
   for input_path in args.inputs:
     ext = os.path.splitext(input_path)[1].lower()
     mem_allowance = limit_mem_size - total_mem_size
-    if ext in EXTS_VIDEO:
+    if ext in EXTS_NPZ:
+      npz_image_data = load_npz(input_path, mem_allowance)
+      for image, bits in npz_image_data:
+        total_mem_size += estimate_image_memory_size(image)
+        if total_mem_size > limit_mem_size:
+          raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
+        images_data.append((image, bits))
+    elif ext in EXTS_VIDEO:
       video_image_data = load_video(input_path, mem_allowance, args.input_video_fps)
       for image, bits in video_image_data:
         total_mem_size += estimate_image_memory_size(image)
@@ -1642,6 +1686,11 @@ def load_input_images(args):
     else:
       raise ValueError(f"Unsupported file format: {ext}")
   return images_data
+
+
+def postprocess_npz(args, images):
+  logger.info(f"Saving the output file as a NumPy compressed")
+  save_npz(args.output, images)
 
 
 def postprocess_video(args, images):

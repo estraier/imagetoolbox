@@ -131,6 +131,13 @@ input images.  You can specify the FPS (frames per second).
 
   $ itb_stack.py input.mp4 -o output.jpg --input-video-fps 0.5
 
+If the output file name has an extension ".npz", an NumPy archive whose frames are the input
+float32 images is created.  It can be used as an input file.  As with the video output, aligned
+images are saved in the file so it is useful as a cache to omit costly image alignment.
+
+  $ itb_stack.py input*.jpg -o cache.npz -a s
+  $ itb_stack.py cache.npz -o output.jpg -m d -t r
+
 The workflow of this command is the following.
 
   1: All input image files are loaded and converted to lenear RGB channels.
@@ -145,8 +152,9 @@ The workflow of this command is the following.
   6: Brightness of the merged image is adjusted to the input average.
        use -nr or --no-restore to disable it.
   7: Optionally, various postprocessing methods are applied.
-       --slog to modify brightness by a scaled logarithmic function.
-       --sigmoid to adjust contrast by a scaled sigmoid function.
+       --gamma to modify brightness by a gamma function
+       --slog to modify brightness by a scaled logarithmic function
+       --sigmoid to adjust contrast by a scaled sigmoid function
        --histeq to apply histgram equalization
        --denoise, --blur, --unsharp to adjust sharpness
        --trim, --pers, --scale to change geometry
