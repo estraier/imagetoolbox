@@ -141,17 +141,19 @@ images are saved in the file so it is useful as a cache to omit costly image ali
 The workflow of this command is the following.
 
   1: All input image files are loaded and converted to lenear RGB channels.
-  2: Optionally, brightness of each image is adjusted to their average.
+  2: Optionally, white balance of each image is adjusted.
+       use -wb or --white-balance to specify "auto" or RGB weights like 10,13,11
+  3: Optionally, brightness of each image is adjusted to their average.
        use -ax or --average-exposure to enable it
-  3: Optionally, position of each image is adjusted to the first one.
+  4: Optionally, position of each image is adjusted to the first one.
        use -a or --align to specify the mode
-  4: Multiple images are merged into one.
+  5: Multiple images are merged into one.
        use -m or --merge to specify the mode
-  5: For HDR images, tone mapping is applied to be normal LDR images.
+  6: For HDR images, tone mapping is applied to be normal LDR images.
        use -t or --tonemap to specify the mode
-  6: Brightness of the merged image is adjusted to the input average.
+  7: Brightness of the merged image is adjusted to the input average.
        use -nr or --no-restore to disable it.
-  7: Optionally, various postprocessing methods are applied.
+  8: Optionally, various postprocessing methods are applied.
        --gamma to modify brightness by a gamma function
        --slog to modify brightness by a scaled logarithmic function
        --sigmoid to adjust contrast by a scaled sigmoid function

@@ -392,6 +392,39 @@ def apply_sigmoid_image(image, gain, mid):
   return np.clip(image, 0, 1).astype(np.float32)
 
 
+def adjust_white_balance_image(image, expr):
+  """Adjusts the white balance of an image."""
+  expr = expr.strip()
+  if expr == "auto":
+    mean_b = np.mean(image[:, :, 0]) + 1e-6
+    mean_g = np.mean(image[:, :, 1]) + 1e-6
+    mean_r = np.mean(image[:, :, 2]) + 1e-6
+    mean_gray = (mean_b + mean_g + mean_r) / 3
+    scale_b = mean_gray / mean_b
+    scale_g = mean_gray / mean_g
+    scale_r = mean_gray / mean_r
+  else:
+    match = re.search(r"([\d\.]+)([^\d\.]+)([\d\.]+)([^\d\.]+)([\d\.]+)", expr)
+    if match:
+      ratio_r = float(match.group(1))
+      ratio_g = float(match.group(3))
+      ratio_b = float(match.group(5))
+    else:
+      raise ValueError(f"Invalid white balance expresion: {expr}")
+    if ratio_r < 0 or ratio_g < 0 or ratio_b < 0:
+      raise ValueError(f"Negative white balance expresion: {expr}")
+    ratio_gray = (ratio_b + ratio_g + ratio_r) / 3
+    scale_r = ratio_r / (ratio_gray + 1e-6)
+    scale_g = ratio_g / (ratio_gray + 1e-6)
+    scale_b = ratio_b / (ratio_gray + 1e-6)
+  logger.debug(f"R={scale_r:.3f}, G={scale_g:.3f}, B={scale_b:.3f}")
+  mask_white = np.all(image >= 0.98, axis=2)
+  image[:, :, 0] = np.where(mask_white, 1.0, np.clip(image[:, :, 0] * scale_b, 0, 1))
+  image[:, :, 1] = np.where(mask_white, 1.0, np.clip(image[:, :, 1] * scale_g, 0, 1))
+  image[:, :, 2] = np.where(mask_white, 1.0, np.clip(image[:, :, 2] * scale_r, 0, 1))
+  return image
+
+
 def adjust_exposure_image(image, target_brightness, max_tries=10, max_dist=0.01):
   """Adjusts the exposure of an image to a target brightness."""
   brightness = compute_brightness(image) + 1e-6
@@ -1518,19 +1551,22 @@ def main():
   ap.add_argument("inputs", nargs='+', help="input image paths")
   ap.add_argument("--output", "-o", default="output.jpg", metavar="path",
                   help="output image path (dafault=output.jpg)")
+  ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
+                  help="choose a white balance:"
+                  " none (default), auto, or three weights of RGB like 11,13,12")
   ap.add_argument("--average-exposure", "-ax", action='store_true',
                   help="average input exposure")
-  ap.add_argument("--align", "-a", default="none", metavar="name",
-                  help="Choose an alignment method for input images:"
+  ap.add_argument("--align", "-a", default="", metavar="name",
+                  help="choose an alignment method for input images:"
                   " none (default), orb, sift, ecc, hugin")
   ap.add_argument("--ignore-unaligned", "-iu", action='store_true',
-                  help="Ignore unaligned images")
+                  help="ignore unaligned images")
   ap.add_argument("--merge", "-m", default="average", metavar="name",
-                  help="Choose a processing method for merging:"
+                  help="choose a processing method for merging:"
                   " average (default), median, geomean, maximum, minimum, denoise, weighted,"
                   " debevec, robertson, mertens, focus, grid, stitch")
   ap.add_argument("--tonemap", "-t", default="linear", metavar="name",
-                  help="Choose a tone mapping method for debevec:"
+                  help="choose a tone mapping method for debevec:"
                   " linear (default), reinhard, drago, mantiuk")
   ap.add_argument("--no-restore", "-nr", action='store_true',
                   help="do not apply auto restoration of brightness")
@@ -1591,6 +1627,9 @@ def main():
   brightness_values = np.array([compute_brightness(image) for image in images])
   mean_brightness = np.mean(brightness_values)
   logger.debug(f"mean_brightness={mean_brightness:.3f}")
+  if args.white_balance and args.white_balance != "none":
+    logger.info(f"Adjusting white balance")
+    images = [adjust_white_balance_image(image, args.white_balance) for image in images]
   if args.average_exposure:
     logger.info(f"Adjusting input exposure to the mean")
     images = [adjust_exposure_image(image, mean_brightness) for image in images]
@@ -1834,7 +1873,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   if args.saturate != 0:
     logger.info(f"Saturating colors")
     merged_image = saturate_colors_image(merged_image, args.saturate)
-  if args.gray:
+  if args.gray and args.gray != "none":
     logger.info(f"Converting to grayscale")
     merged_image = convert_grayscale_image(merged_image, args.gray)
   if args.denoise > 0:
