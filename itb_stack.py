@@ -289,7 +289,7 @@ def apply_scaled_log_image(image, factor):
   """Adjust image brightness by a scaled log transformation."""
   if factor > 1e-6:
     image = np.log1p(image * factor) / np.log1p(factor)
-  elif factor < 1e-6:
+  elif factor < -1e-6:
     factor = -factor
     image = (np.expm1(image * np.log1p(factor))) / factor
   return image.astype(np.float32)
@@ -357,35 +357,44 @@ def apply_sigmoid_image(image, gain, mid):
   return np.clip(image, 0, 1).astype(np.float32)
 
 
-def adjust_exposure(image, target_brightness):
+def adjust_exposure_image(image, target_brightness, max_tries=10, max_dist=0.01):
   """Adjusts the exposure of an image to a target brightness."""
+  brightness = compute_brightness(image) + 1e-6
+  dist = abs(np.log(target_brightness / brightness))
+  logger.debug(f"tries=0, gain=0.000, dist={dist:.3f},"
+               f" brightness={brightness:.3f}")
+  if dist < max_dist:
+    return image
+  increase = target_brightness > brightness
   num_tries = 0
-  leverage = 1.0
-  brightness = compute_brightness(image)
-  while num_tries < 10:
+  upper = 8.0
+  lower = 1 / upper
+  while True:
     num_tries += 1
-    if (brightness == 0 or target_brightness == 0 or
-        brightness == target_brightness):
-      break
+    gain = (upper * lower) ** 0.5
+    if not increase:
+      gain *= -1
+    tmp_image = apply_scaled_log_image(image, gain)
+    brightness = compute_brightness(tmp_image) + 1e-6
     dist = abs(np.log(target_brightness / brightness))
-    logger.debug(f"tries={num_tries}, dist={dist:.3f},"
+    logger.debug(f"tries={num_tries}, gain={gain:.3f}, dist={dist:.3f},"
                  f" brightness={brightness:.3f}")
-    if dist < 0.1:
-      break
-    if brightness <= target_brightness:
-      factor = np.expm1(target_brightness * np.log1p(brightness)) / brightness
-      factor = max(leverage, factor)
-      adjusted_image = lighten_image(image, factor)
+    if dist < max_dist or num_tries >= max_tries:
+      return tmp_image
+    if increase:
+      if target_brightness > brightness:
+        if num_tries < max_tries / 2:
+          upper *= 2
+        lower = gain
+      else:
+        upper = gain
     else:
-      factor = np.expm1(np.log1p(target_brightness) / brightness)
-      factor = max(leverage, factor)
-      adjusted_image = darken_image(image, factor)
-    adjusted_brightness = compute_brightness(adjusted_image)
-    adjusted_dist = abs(np.log(target_brightness / adjusted_brightness))
-    if adjusted_dist < dist:
-      image = adjusted_image
-      brightness = adjusted_brightness
-    leverage *= 0.5
+      if target_brightness < brightness:
+        if num_tries < max_tries / 2:
+          upper *= 2
+        lower = -gain
+      else:
+        upper = -gain
   return image
 
 
@@ -1555,7 +1564,7 @@ def main():
   logger.debug(f"mean_brightness={mean_brightness:.3f}")
   if args.average_exposure:
     logger.info(f"Adjusting input exposure to the mean")
-    images = [adjust_exposure(image, mean_brightness) for image in images]
+    images = [adjust_exposure_image(image, mean_brightness) for image in images]
   aligned_indices = set()
   align_params = parse_name_opts_expression(args.align)
   align_name = align_params["name"]
@@ -1760,7 +1769,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     merged_image = fix_overflown_image(merged_image)
   if not args.no_restore:
     logger.info(f"Applying auto restoration of brightness")
-    merged_image = adjust_exposure(merged_image, mean_brightness)
+    merged_image = adjust_exposure_image(merged_image, mean_brightness)
   if args.fill_margin:
     logger.info(f"Filling the margin")
     merged_image = fill_black_margin_image(merged_image)

@@ -17,7 +17,7 @@ from itb_stack import (
   set_logging_level,
   load_image, save_image, load_video, save_video,
   compute_brightness, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
-  adjust_exposure,
+  adjust_exposure_image,
   align_images_orb, align_images_sift, align_images_ecc,
   merge_images_average, merge_images_median, merge_images_geometric_mean,
   merge_images_minimum, merge_images_maximum,
@@ -208,7 +208,7 @@ class TestItbStack(unittest.TestCase):
 
   def test_adjust_exposure(self):
     image = generate_test_image()
-    adjusted_image = adjust_exposure(image, 0.65)
+    adjusted_image = adjust_exposure_image(image, 0.65)
     self.assertEqual(adjusted_image.shape, image.shape)
 
   def test_align_images_orb(self):
