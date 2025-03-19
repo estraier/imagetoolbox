@@ -211,9 +211,19 @@ class TestItbStack(unittest.TestCase):
     adjusted_image = adjust_white_balance_image(image, "auto")
     self.assertEqual(adjusted_image.shape, image.shape)
 
+  def test_adjust_white_balance_auto_scene(self):
+    image = generate_test_image()
+    adjusted_image = adjust_white_balance_image(image, "auto-scene")
+    self.assertEqual(adjusted_image.shape, image.shape)
+
   def test_adjust_white_balance_weights(self):
     image = generate_test_image()
     adjusted_image = adjust_white_balance_image(image, "10,12,11")
+    self.assertEqual(adjusted_image.shape, image.shape)
+
+  def test_adjust_white_balance_kelvin(self):
+    image = generate_test_image()
+    adjusted_image = adjust_white_balance_image(image, "5500")
     self.assertEqual(adjusted_image.shape, image.shape)
 
   def test_adjust_exposure(self):

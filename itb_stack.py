@@ -392,36 +392,140 @@ def apply_sigmoid_image(image, gain, mid):
   return np.clip(image, 0, 1).astype(np.float32)
 
 
-def adjust_white_balance_image(image, expr):
+def compute_auto_white_balance_factors(image, edge_weight=0.5, luminance_weight=0.5):
+  """Computes the mean values for RGB channels for auto white balance."""
+  image = cv2.GaussianBlur(image, (5, 5), 0)
+  max_area = 1000000
+  current_area = image.shape[0] * image.shape[1]
+  if current_area > max_area:
+    scale_factor = np.sqrt(max_area / current_area)
+    image = cv2.resize(image, (0, 0), fx=scale_factor, fy=scale_factor,
+                       interpolation=cv2.INTER_AREA)
+  std_range = 2
+  if edge_weight > 0:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    edge_mask = np.sqrt(sobel_x**2 + sobel_y**2)
+    edge_mean = np.mean(edge_mask)
+    edge_std = np.std(edge_mask) + 1e-6
+    edge_mask = np.clip(edge_mask, edge_mean - std_range * edge_std,
+                        edge_mean + std_range * edge_std)
+    edge_mask = ((edge_mask - (edge_mean - std_range * edge_std)) /
+                 (2 * std_range * edge_std + 1e-6))
+    edge_mask = np.clip(edge_mask, 0, 1)
+  else:
+    edge_mask = np.zeros_like(image[:, :, 0], dtype=np.float32)
+  if luminance_weight > 0:
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_channel, _, _ = cv2.split(lab)
+    l_mean = np.mean(l_channel)
+    l_std = np.std(l_channel) + 1e-6
+    luminance_mask = np.clip(l_channel, l_mean - std_range * l_std, l_mean + std_range * l_std)
+    luminance_mask = ((luminance_mask - (l_mean - std_range * l_std)) /
+              (2 * std_range * l_std + 1e-6))
+    luminance_mask = np.clip(luminance_mask, 0, 1)
+  else:
+    luminance_mask = np.zeros_like(image[:, :, 0], dtype=np.float32)
+  total_weight = edge_weight + luminance_weight
+  if total_weight > 0:
+    edge_weight /= total_weight
+    luminance_weight /= total_weight
+    combined_mask = edge_weight * edge_mask + luminance_weight * luminance_mask
+  else:
+    combined_mask = np.ones_like(image[:, :, 0], dtype=np.float32)
+  mean_b = np.sum(image[:, :, 0] * combined_mask) / (np.sum(combined_mask) + 1e-6)
+  mean_g = np.sum(image[:, :, 1] * combined_mask) / (np.sum(combined_mask) + 1e-6)
+  mean_r = np.sum(image[:, :, 2] * combined_mask) / (np.sum(combined_mask) + 1e-6)
+  return mean_r, mean_g, mean_b
+
+
+def convert_kelvin_to_rgb(kelvin):
+  """Converts a color temperature to RGB."""
+  temp = kelvin / 100
+  if temp <= 66:
+    r = 1.0
+    g = 0.3900815787690196 * np.log(temp) - 0.6318414437886275
+    b = 1.0 if temp <= 19 else 0.543206789110196 * np.log(temp - 10) - 1.19625408914
+  else:
+    r = 1.292936186062745 * (temp / 100) ** -0.1332047592
+    g = 1.129890860895294 * (temp / 100) ** -0.0755148492
+    b = 1.0
+  return tuple(np.clip([r, g, b], 0, 2.0))
+
+
+def adjust_white_balance_image(image, expr="auto"):
   """Adjusts the white balance of an image."""
-  expr = expr.strip()
-  if expr == "auto":
-    mean_b = np.mean(image[:, :, 0]) + 1e-6
-    mean_g = np.mean(image[:, :, 1]) + 1e-6
-    mean_r = np.mean(image[:, :, 2]) + 1e-6
+  WB_PRESETS = {
+    "daylight": (1.1, 1.0, 0.9),
+    "cloudy": (1.2, 1.0, 0.8),
+    "shade": (1.3, 1.0, 0.7),
+    "tungsten": (0.7, 1.0, 1.3),
+    "fluorescent": (0.9, 1.0, 1.1),
+    "flash": (1.1, 1.0, 0.9),
+  }
+  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  expr = expr.strip().lower()
+  params = parse_name_opts_expression(expr)
+  name = params["name"]
+  if name in ["auto", "auto-scene"]:
+    kwargs = {}
+    if "edge_weight" in params:
+      kwargs["edge_weight"] = int(params["edge_weight"])
+    if "luminance_weight" in params:
+      kwargs["luminance_weight"] = float(params["luminance_weight"])
+    mean_r, mean_g, mean_b = compute_auto_white_balance_factors(image, **kwargs)
     mean_gray = (mean_b + mean_g + mean_r) / 3
-    scale_b = mean_gray / mean_b
-    scale_g = mean_gray / mean_g
-    scale_r = mean_gray / mean_r
+    scale_r = mean_gray / max(mean_r, 1e-6)
+    scale_g = mean_gray / max(mean_g, 1e-6)
+    scale_b = mean_gray / max(mean_b, 1e-6)
+    if expr == "auto-scene":
+      scale_rgb = np.array([scale_r, scale_g, scale_b])
+      image_vector = np.array([scale_r, scale_g, scale_b])
+      image_norm = np.linalg.norm(image_vector)
+      best_preset = None
+      best_similarity = -1
+      for preset, reference_rgb in WB_PRESETS.items():
+        preset_vector = np.array(reference_rgb)
+        preset_norm = np.linalg.norm(preset_vector)
+        similarity = np.dot(image_vector, preset_vector) / (image_norm * preset_norm + 1e-6)
+        if similarity > best_similarity:
+          best_similarity = similarity
+          best_preset = preset
+      logger.debug(f"scene={best_preset}, similarity={best_similarity:.3f},"
+                   f" from={scale_r:.3f},{scale_g:.3f},{scale_b:.3f}")
+      scale_r, scale_g, scale_b = WB_PRESETS[best_preset]
+  elif expr in WB_PRESETS:
+    scale_r, scale_g, scale_b = WB_PRESETS[expr]
+  elif re.match(r"^\d+(\.\d+)?$", expr):
+    kelvin = float(expr)
+    if kelvin < 1000 or kelvin > 30000:
+      raise ValueError(f"Invalid kelvin range: {expr}")
+    mean_r, mean_g, mean_b = convert_kelvin_to_rgb(kelvin)
+    mean_gray = (mean_b + mean_g + mean_r) / 3
+    scale_r = mean_gray / max(mean_r, 1e-6)
+    scale_g = mean_gray / max(mean_g, 1e-6)
+    scale_b = mean_gray / max(mean_b, 1e-6)
   else:
     match = re.search(r"([\d\.]+)([^\d\.]+)([\d\.]+)([^\d\.]+)([\d\.]+)", expr)
     if match:
-      ratio_r = float(match.group(1))
-      ratio_g = float(match.group(3))
-      ratio_b = float(match.group(5))
+      mean_r = float(match.group(1))
+      mean_g = float(match.group(3))
+      mean_b = float(match.group(5))
     else:
       raise ValueError(f"Invalid white balance expresion: {expr}")
-    if ratio_r < 0 or ratio_g < 0 or ratio_b < 0:
+    if mean_r < 0 or mean_g < 0 or mean_b < 0:
       raise ValueError(f"Negative white balance expresion: {expr}")
-    ratio_gray = (ratio_b + ratio_g + ratio_r) / 3
-    scale_r = ratio_r / (ratio_gray + 1e-6)
-    scale_g = ratio_g / (ratio_gray + 1e-6)
-    scale_b = ratio_b / (ratio_gray + 1e-6)
+    mean_gray = (mean_b + mean_g + mean_r) / 3
+    scale_r = mean_gray / max(mean_r, 1e-6)
+    scale_g = mean_gray / max(mean_g, 1e-6)
+    scale_b = mean_gray / max(mean_b, 1e-6)
   logger.debug(f"R={scale_r:.3f}, G={scale_g:.3f}, B={scale_b:.3f}")
-  mask_white = np.all(image >= 0.98, axis=2)
-  image[:, :, 0] = np.where(mask_white, 1.0, np.clip(image[:, :, 0] * scale_b, 0, 1))
-  image[:, :, 1] = np.where(mask_white, 1.0, np.clip(image[:, :, 1] * scale_g, 0, 1))
-  image[:, :, 2] = np.where(mask_white, 1.0, np.clip(image[:, :, 2] * scale_r, 0, 1))
+  white_threshold = 0.98
+  weights = 1 - np.clip((gray - (1 - white_threshold)) / white_threshold, 0, 1)
+  image[:, :, 0] = np.clip(image[:, :, 0] * (weights * scale_b + (1 - weights)), 0, 1)
+  image[:, :, 1] = np.clip(image[:, :, 1] * (weights * scale_g + (1 - weights)), 0, 1)
+  image[:, :, 2] = np.clip(image[:, :, 2] * (weights * scale_r + (1 - weights)), 0, 1)
   return image
 
 
@@ -1553,7 +1657,8 @@ def main():
                   help="output image path (dafault=output.jpg)")
   ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
                   help="choose a white balance:"
-                  " none (default), auto, or three weights of RGB like 11,13,12")
+                  " none (default), auto, auto-scene, daylight, cloudy, shade, tungsten,"
+                  " fluorescent, flash, or a kelvin in K or three weights of RGB like 11,13,12")
   ap.add_argument("--average-exposure", "-ax", action='store_true',
                   help="average input exposure")
   ap.add_argument("--align", "-a", default="", metavar="name",
