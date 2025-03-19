@@ -41,7 +41,8 @@ PROG_VERSION = "0.0.2"
 CMD_EXIFTOOL = "exiftool"
 CMD_HUGIN_ALIGN = "align_image_stack"
 EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"]
-EXTS_IMAGE_EXIF = [".jpg", ".jpeg", ".tiff", ".tif", ".webp"]
+EXTS_IMAGE_HEIF = [".heic", ".heif"]
+EXTS_IMAGE_EXIF = [".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".heic", ".heif"]
 EXTS_VIDEO = [".mp4", ".mov"]
 EXTS_NPZ = [".npz"]
 
@@ -111,6 +112,25 @@ def save_image(file_path, image, bits):
   success = cv2.imwrite(file_path, image)
   if not success:
     raise ValueError(f"Failed to save image: {file_path}")
+
+
+def load_images_heif(file_path):
+  """Loads images in HEIF/HEIC and returns their linear RGB data as a tuple of a NumPy array."""
+  from pillow_heif import open_heif
+  logger.debug(f"loading HEIF/HIEC image: {file_path}")
+  heif_file = open_heif(file_path)
+  images = []
+  for heif_image in heif_file:
+    if heif_image.mode in ["RGB", "RGBA", "L", "LA"]:
+      image = np.array(heif_image).astype(np.uint8)
+    elif heif_image.mode == "I;16":
+      image = np.array(heif_image).astype(np.uint16)
+    else:
+      raise ValueError(f"Unknown image mode: {heif_image.mode}")
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    image, bits = normalize_input_image(image)
+    images.append((image, bits))
+  return images
 
 
 def load_video(file_path, mem_allowance, input_fps):
@@ -289,8 +309,11 @@ def copy_metadata(source_path, target_path):
   cmd = ["exiftool", "-TagsFromFile", source_path, "-icc_profile",
          "-thumbnailimage=", "-f", "-m", "-overwrite_original", target_path]
   logger.debug(f"running: {' '.join(cmd)}")
-  subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
-                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+  try:
+    subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+  except:
+    pass
 
 
 def srgb_to_linear(image):
@@ -1810,6 +1833,12 @@ def load_input_images(args):
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
         images_data.append((image, bits))
+    elif ext in EXTS_IMAGE_HEIF:
+      for image, bits in load_images_heif(input_path):
+        total_mem_size += estimate_image_memory_size(image)
+        if total_mem_size > limit_mem_size:
+          raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
+        images_data.append((image, bits))
     elif ext in EXTS_IMAGE:
       image, bits = load_image(input_path)
       total_mem_size += estimate_image_memory_size(image)
@@ -1994,6 +2023,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     logger.info(f"Writing the caption")
     merged_image = write_caption(merged_image, args.caption)
   logger.info(f"Saving the output file as an image")
+  ext = os.path.splitext(args.output)[1].lower()
   save_image(args.output, merged_image, bits_list[0])
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
