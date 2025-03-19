@@ -330,22 +330,6 @@ def apply_scaled_log_image(image, factor):
   return image.astype(np.float32)
 
 
-def lighten_image(image, factor):
-  """Lightens the image by applying a scaled log transformation."""
-  if factor < 1e-6:
-    return image
-  image = np.log1p(image * factor) / np.log1p(factor)
-  return image.astype(np.float32)
-
-
-def darken_image(image, factor):
-  """Darkens the image by applying an inverse scaled log transformation."""
-  if factor < 1e-6:
-    return image
-  image = (np.expm1(image * np.log1p(factor))) / factor
-  return image.astype(np.float32)
-
-
 def naive_sigmoid(x, gain, mid):
   """Computes naive sigmod conversion."""
   image = 1.0 / (1.0 + np.exp((mid - x) * gain))
@@ -844,7 +828,7 @@ def align_images_ecc(images, aligned_indices, use_affine=True, denoise=3):
         criteria, inputMask=None, gaussFiltSize=5)
       log_homography_matrix(warp_matrix)
       aligned_image = cv2.warpAffine(
-        image, warp_matrix, (w, h), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP,
+        image, warp_matrix, (w, h), flags=cv2.INTER_LANCZOS4 + cv2.WARP_INVERSE_MAP,
         borderMode=cv2.BORDER_REPLICATE)
       if is_homography_valid(warp_matrix, w, h):
         aligned_indices.add(len(aligned_images))
@@ -1480,7 +1464,12 @@ def get_scaled_image_size(image, long_size):
 
 def scale_image(image, width, height):
   """Scales the image into the new geometry."""
-  return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+  h, w = image.shape[:2]
+  if width * height > h * w:
+    interpolation = cv2.INTER_LANCZOS4
+  else:
+    interpolation = cv2.INTER_AREA
+  return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
 
 
 def parse_color_expr(expr):
@@ -1521,8 +1510,8 @@ def write_caption(image, capexpr):
     match = re.fullmatch(r" *(\d+\.\d*) *", fields[1])
     if match:
       font_ratio = float(match.group(1))
-  font_scale = 0.01 * np.sqrt(h * w) / 5 * font_ratio
-  thickness = max(1, int(font_scale))
+  font_scale = 0.002 * np.sqrt(h * w) * font_ratio
+  thickness = max(2, int(font_scale * 1.5))
   r, g, b = (255, 255, 255)
   if len(fields) > 2:
     color = parse_color_expr(fields[2])
