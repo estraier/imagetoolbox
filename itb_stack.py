@@ -1995,65 +1995,64 @@ def log_image_stats(image, prefix):
                f" mean={mean:.3f}, stddev={stddev:.3f}, nan={has_nan}")
 
 
-def edit_image(args, image):
+def edit_image(image, args):
   """Edits an image."""
-
-
+  trim_params = parse_trim_expression(args.trim)
+  pers_params = parse_pers_expression(args.pers)
+  scale_params = parse_scale_expression(args.scale)
   if args.fill_margin:
     logger.info(f"Filling the margin")
-    merged_image = fill_black_margin_image(merged_image)
+    image = fill_black_margin_image(image)
   if args.gamma != 1.0 and args.gamma > 0:
     logger.info(f"Adjust brightness by a gamma")
-    merged_image = apply_gamma_image(merged_image, args.gamma)
+    image = apply_gamma_image(image, args.gamma)
   if args.slog != 0:
     logger.info(f"Adjust brightness by a scaled log")
-    merged_image = apply_scaled_log_image(merged_image, args.slog)
+    image = apply_scaled_log_image(image, args.slog)
   if args.sigmoid != 0:
     logger.info(f"Adjust brightness by a sigmoid")
-    merged_image = apply_sigmoid_image(merged_image, args.sigmoid, 0.5)
+    image = apply_sigmoid_image(image, args.sigmoid, 0.5)
   if args.histeq > 0:
     logger.info(f"Applying CLAHE enhancement")
-    merged_image = apply_clahe_image(merged_image, args.histeq)
+    image = apply_clahe_image(image, args.histeq)
   elif args.histeq < 0:
     logger.info(f"Applying global HE enhancement")
-    merged_image = apply_global_histeq_image(merged_image)
+    image = apply_global_histeq_image(image)
   if args.saturate != 0:
     logger.info(f"Saturating colors")
-    merged_image = saturate_colors_image(merged_image, args.saturate)
+    image = saturate_colors_image(image, args.saturate)
   if args.gray and args.gray != "none":
     logger.info(f"Converting to grayscale")
-    merged_image = convert_grayscale_image(merged_image, args.gray)
+    image = convert_grayscale_image(image, args.gray)
   if args.denoise > 0:
     logger.info(f"Applying birateral denoise")
-    merged_image = bilateral_denoise_image(merged_image, args.denoise)
+    image = bilateral_denoise_image(image, args.denoise)
   if args.blur > 0:
     logger.info(f"Applying Gaussian blur")
-    merged_image = gaussian_blur_image(merged_image, args.blur)
+    image = gaussian_blur_image(image, args.blur)
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
-    merged_image = gaussian_unsharp_image(merged_image, args.unsharp)
+    image = gaussian_unsharp_image(image, args.unsharp)
   if trim_params:
     logger.info(f"Trimming the image")
-    merged_image = trim_image(merged_image, *trim_params)
+    image = trim_image(image, *trim_params)
   if pers_params:
     logger.info(f"Doing perspective correction of the image")
-    merged_image = perspective_correct_image(merged_image, *pers_params)
+    image = perspective_correct_image(image, *pers_params)
   if scale_params:
     logger.info(f"Scaling the image")
     if scale_params[1] is None:
-      scale_params = get_scaled_image_size(merged_image, scale_params[0])
-    merged_image = scale_image(merged_image, *scale_params)
+      scale_params = get_scaled_image_size(image, scale_params[0])
+    image = scale_image(image, *scale_params)
   if len(args.caption) > 0:
     logger.info(f"Writing the caption")
-    merged_image = write_caption(merged_image, args.caption)
+    image = write_caption(image, args.caption)
+  return image
 
 
 def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   """Postprocesses images as a merged image."""
   merge_params = parse_name_opts_expression(args.merge)
-  trim_params = parse_trim_expression(args.trim)
-  pers_params = parse_pers_expression(args.pers)
-  scale_params = parse_scale_expression(args.scale)
   merge_name = merge_params["name"]
   is_hdr = False
   if merge_name in ["average", "a", "mean"]:
@@ -2138,6 +2137,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   if not args.no_restore:
     logger.info(f"Applying auto restoration of brightness")
     merged_image = adjust_exposure_image(merged_image, mean_brightness)
+  merged_image = edit_image(merged_image, args)
   logger.info(f"Saving the output file as an image")
   ext = os.path.splitext(args.output)[1].lower()
   save_image(args.output, merged_image, bits_list[0])
