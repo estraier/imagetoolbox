@@ -576,13 +576,17 @@ def adjust_white_balance_image(image, expr="auto"):
   expr = expr.strip().lower()
   params = parse_name_opts_expression(expr)
   name = params["name"]
-  if name in ["auto", "auto-scene"]:
+  if name in ["auto", "auto-scene", "auto-temp"]:
     kwargs = {}
     if "edge_weight" in params:
       kwargs["edge_weight"] = int(params["edge_weight"])
     if "luminance_weight" in params:
       kwargs["luminance_weight"] = float(params["luminance_weight"])
     mean_r, mean_g, mean_b = compute_auto_white_balance_factors(image, **kwargs)
+    if name == "auto-temp":
+      kelvin = convert_rgb_to_kelvin(mean_r, mean_g, mean_b)
+      logger.debug(f"tempelature={kelvin:.0f}K, from={mean_r:.3f},{mean_g:.3f},{mean_b:.3f}")
+      mean_r, mean_g, mean_b = convert_kelvin_to_rgb(kelvin)
     mean_gray = (mean_b + mean_g + mean_r) / 3
     scale_r = mean_gray / max(mean_r, 1e-6)
     scale_g = mean_gray / max(mean_g, 1e-6)
