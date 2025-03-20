@@ -447,18 +447,117 @@ def compute_auto_white_balance_factors(image, edge_weight=0.5, luminance_weight=
   return mean_r, mean_g, mean_b
 
 
-def convert_kelvin_to_rgb(kelvin):
-  """Converts a color temperature to RGB."""
-  temp = kelvin / 100
-  if temp <= 66:
-    r = 1.0
-    g = 0.3900815787690196 * np.log(temp) - 0.6318414437886275
-    b = 1.0 if temp <= 19 else 0.543206789110196 * np.log(temp - 10) - 1.19625408914
+def get_chromaticity_coordinates(kelvin):
+  """Returns the chromaticity coordinates for a given color temperature."""
+  if kelvin < 4000:
+    x = (-0.2661239 * (10**9) / kelvin**3 -
+         0.2343580 * (10**6) / kelvin**2 + 0.8776956 * (10**3) / kelvin + 0.179910)
   else:
-    r = 1.292936186062745 * (temp / 100) ** -0.1332047592
-    g = 1.129890860895294 * (temp / 100) ** -0.0755148492
-    b = 1.0
-  return tuple(np.clip([r, g, b], 0, 2.0))
+    x = (-3.0258469 * (10**9) / kelvin**3 + 2.1070379 * (10**6) / kelvin**2 +
+         0.2226347 * (10**3) / kelvin + 0.240390)
+  if kelvin < 2222:
+    y = -1.1063814 * x**3 - 1.34811020 * x**2 + 2.18555832 * x - 0.20219683
+  elif kelvin < 4000:
+    y = -0.9549476 * x**3 - 1.37418593 * x**2 + 2.09137015 * x - 0.16748867
+  else:
+    y = 3.0817580 * x**3 - 5.87338670 * x**2 + 3.75112997 * x - 0.37001483
+  return x, y
+
+
+def estimate_kelvin_to_rgb(kelvin):
+  """Estimates RGB values from a color temperature."""
+  kelvin = np.clip(kelvin, 1000, 40000)
+  x, y = get_chromaticity_coordinates(kelvin)
+  cie_y = 1.0
+  cie_x = (cie_y / y) * x
+  cie_z = (cie_y / y) * (1 - x - y)
+  xyz_to_rgb = np.array([
+    [ 3.2406, -1.5372, -0.4986],
+    [-0.9689,  1.8758,  0.0415],
+    [ 0.0557, -0.2040,  1.0570]
+  ])
+  rgb_linear = np.dot(xyz_to_rgb, np.array([cie_x, cie_y, cie_z]))
+  return tuple(np.clip(rgb_linear, 0.1, 1))
+
+
+def convert_kelvin_to_rgb(kelvin):
+  """Converts a color temperature to RGB values."""
+  cie_standard_data = [
+    (2500, (1.000, 0.374, 0.068)),
+    (3000, (1.000, 0.479, 0.154)),
+    (3500, (1.000, 0.571, 0.259)),
+    (4000, (1.000, 0.653, 0.377)),
+    (4500, (1.000, 0.727, 0.502)),
+    (5000, (1.000, 0.793, 0.629)),
+    (5500, (1.000, 0.850, 0.755)),
+    (5800, (1.000, 0.881, 0.828)),
+    (6000, (1.000, 0.900, 0.876)),
+    (6100, (1.000, 0.909, 0.900)),
+    (6200, (1.000, 0.918, 0.923)),
+    (6300, (1.000, 0.927, 0.947)),
+    (6400, (1.000, 0.935, 0.970)),
+    (6500, (1.000, 0.944, 0.993)),
+    (6600, (0.985, 0.938, 1.000)),
+    (6700, (0.964, 0.925, 1.000)),
+    (6800, (0.944, 0.913, 1.000)),
+    (7000, (0.906, 0.890, 1.000)),
+    (7500, (0.828, 0.842, 1.000)),
+    (8000, (0.766, 0.802, 1.000)),
+    (8500, (0.715, 0.768, 1.000)),
+    (9300, (0.652, 0.725, 1.000)),
+    (9500, (0.639, 0.716, 1.000)),
+  ]
+  if kelvin < cie_standard_data[0][0]:
+    lower_sample = upper_sample = cie_standard_data[0]
+  elif kelvin > cie_standard_data[-1][0]:
+    lower_sample = upper_sample = cie_standard_data[-1]
+  else:
+    lower_sample = None
+    upper_sample = None
+    for sample in cie_standard_data:
+      if kelvin >= sample[0] and (not lower_sample or sample[0] > lower_sample[0]):
+        lower_sample = sample
+      if kelvin <= sample[0] and (not upper_sample or sample[0] < upper_sample[0]):
+        upper_sample = sample
+  lower_rgb = np.array(estimate_kelvin_to_rgb(lower_sample[0]))
+  upper_rgb = np.array(estimate_kelvin_to_rgb(upper_sample[0]))
+  lower_deviation = np.array(lower_sample[1]) / np.clip(lower_rgb, 1e-8, None)
+  upper_deviation = np.array(upper_sample[1]) / np.clip(upper_rgb, 1e-8, None)
+  if lower_sample[0] == upper_sample[0]:
+    weight = 0.5
+  else:
+    weight = (kelvin - lower_sample[0]) / (upper_sample[0] - lower_sample[0])
+  blended_deviation = (1 - weight) * lower_deviation + weight * upper_deviation
+  estimated_rgb = np.array(estimate_kelvin_to_rgb(kelvin))
+  corrected_rgb = estimated_rgb * blended_deviation
+  return tuple(corrected_rgb / np.max(corrected_rgb))
+
+
+def convert_rgb_to_kelvin(r, g, b):
+  """Converts RGB values to a color temperature."""
+  weights = np.array([2.0, 1.0, 2.0])
+  rgb_input = np.array([r, g, b])
+  rgb_input *= weights
+  rgb_input /= np.linalg.norm(rgb_input)
+  best_kelvin = 2000
+  step = 500
+  lowest = 2000
+  highest = 20000
+  for _ in range(3):
+    best_similarity = -1
+    for kelvin in np.arange(lowest, highest + step, step):
+      r_est, g_est, b_est = convert_kelvin_to_rgb(kelvin)
+      rgb_est = np.array([r_est, g_est, b_est])
+      rgb_est *= weights
+      rgb_est /= np.linalg.norm(rgb_est)
+      similarity = np.dot(rgb_input, rgb_est)
+      if similarity > best_similarity:
+        best_similarity = similarity
+        best_kelvin = kelvin
+    lowest = best_kelvin - step
+    highest = best_kelvin + step
+    step /= 10
+  return best_kelvin
 
 
 def adjust_white_balance_image(image, expr="auto"):
@@ -470,6 +569,7 @@ def adjust_white_balance_image(image, expr="auto"):
     "tungsten": (0.7, 1.0, 1.3),
     "fluorescent": (0.9, 1.0, 1.1),
     "flash": (1.1, 1.0, 0.9),
+    "starlight": (1.4, 1.0, 0.6),
   }
   gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
   expr = expr.strip().lower()
