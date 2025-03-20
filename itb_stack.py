@@ -1961,12 +1961,15 @@ def load_input_images(args):
 
 
 def postprocess_npz(args, images):
+  """Postprocess images as a NumPy compressed."""
+  images = [edit_image(image, args) for image in images]
   logger.info(f"Saving the output file as a NumPy compressed")
   save_npz(args.output, images)
 
 
 def postprocess_video(args, images):
   """Postprocess images as a video."""
+  images = [edit_image(image, args) for image in images]
   logger.info(f"Saving the output file as a video")
   save_video(args.output, images, args.output_video_fps)
   if has_command(CMD_EXIFTOOL):
