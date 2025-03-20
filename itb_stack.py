@@ -477,7 +477,8 @@ def estimate_kelvin_to_rgb(kelvin):
     [ 0.0557, -0.2040,  1.0570]
   ])
   rgb_linear = np.dot(xyz_to_rgb, np.array([cie_x, cie_y, cie_z]))
-  return tuple(np.clip(rgb_linear, 0.1, 1))
+  rgb_linear /= np.max(rgb_linear)
+  return float(rgb_linear[0]), float(rgb_linear[1]), float(rgb_linear[2])
 
 
 def convert_kelvin_to_rgb(kelvin):
