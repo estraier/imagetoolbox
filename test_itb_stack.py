@@ -27,7 +27,7 @@ from itb_stack import (
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
   fill_black_margin_image,
   apply_global_histeq_image, apply_clahe_image,
-  saturate_colors_image, convert_grayscale_image,
+  saturate_colors_image, apply_artistic_filter_image, convert_grayscale_image,
   bilateral_denoise_image, gaussian_blur_image, gaussian_unsharp_image,
   perspective_correct_image, trim_image, scale_image, write_caption,
 )
@@ -391,6 +391,12 @@ class TestItbStack(unittest.TestCase):
     image = generate_test_image()
     processed = saturate_colors_image(image, -3)
     self.assertEqual(processed.shape, image.shape)
+
+  def test_artistic_filter(self):
+    image = generate_test_image()
+    for name in ["pencil", "stylized", "oil", "cartoon"]:
+      processed = apply_artistic_filter_image(image, name)
+      self.assertEqual(processed.shape, image.shape)
 
   def test_convert_grayscale_image(self):
     image = generate_test_image()

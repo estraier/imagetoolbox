@@ -1438,6 +1438,58 @@ def saturate_colors_image(image, factor):
   return mod_image.astype(np.float32)
 
 
+def apply_artistic_filter_image(image, name):
+  """Applies an artistic filter."""
+  name = name.strip().lower()
+  if name == "pencil":
+    gamma = 2.2
+    gamma_image = np.power(image, 1 / gamma)
+    byte_image = (gamma_image * 255).astype(np.uint8)
+    undo_bytes = byte_image.astype(np.float32)
+    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+    _, converted = cv2.pencilSketch(byte_image)
+    restored = converted.astype(np.float32) / 255
+    restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+    image = np.clip(np.power(restored, gamma), 0, 1)
+  elif name == "stylized":
+    gamma = 2.2
+    gamma_image = np.power(image, 1 / gamma)
+    byte_image = (gamma_image * 255).astype(np.uint8)
+    undo_bytes = byte_image.astype(np.float32)
+    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+    converted = cv2.stylization(byte_image)
+    restored = converted.astype(np.float32) / 255
+    restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+    image = np.clip(np.power(restored, gamma), 0, 1)
+  elif name == "oil":
+    gamma = 2.2
+    gamma_image = np.power(image, 1 / gamma)
+    byte_image = (gamma_image * 255).astype(np.uint8)
+    undo_bytes = byte_image.astype(np.float32)
+    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+    converted = cv2.xphoto.oilPainting(byte_image, size=7, dynRatio=1)
+    restored = converted.astype(np.float32) / 255
+    restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+    image = np.clip(np.power(restored, gamma), 0, 1)
+  elif name == "cartoon":
+    gamma = 1.2
+    gamma_image = np.power(image, 1 / gamma)
+    byte_image = (gamma_image * 255).astype(np.uint8)
+    undo_bytes = byte_image.astype(np.float32)
+    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+    gray = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.medianBlur(gray, 7)
+    edges = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 9, 10)
+    color = cv2.bilateralFilter(byte_image, 9, 250, 250)
+    converted = cv2.bitwise_and(color, color, mask=edges).astype(np.float32)
+    restored = converted.astype(np.float32) / 255
+    restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+    image = np.clip(np.power(restored, gamma), 0, 1)
+  else:
+    raise ValueError(f"Unknown artistic filter: {name}")
+  return image
+
+
 def convert_grayscale_image(image, name):
   """Converts the image into grayscale."""
   confs = [(("bt601", "601", "gray"), (0.299, 0.587, 0.114)),
@@ -1807,6 +1859,8 @@ def make_ap_args():
                   help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--saturate", type=float, default=0, metavar="num",
                   help="saturate colors. positive for vivid, negative for muted")
+  ap.add_argument("--art", default="", metavar="text",
+                  help="apply an artistic filter: pencil, stylized, oil, cartoon")
   ap.add_argument("--gray", default="", metavar="text",
                   help="convert to grayscale: bt601, bt709, bt2020,"
                   " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel")
@@ -2024,6 +2078,9 @@ def edit_image(image, args):
   if args.saturate != 0:
     logger.info(f"Saturating colors")
     image = saturate_colors_image(image, args.saturate)
+  if args.art and args.gray != "none":
+    logger.info(f"Applying an artistic filter")
+    image = apply_artistic_filter_image(image, args.art)
   if args.gray and args.gray != "none":
     logger.info(f"Converting to grayscale")
     image = convert_grayscale_image(image, args.gray)
