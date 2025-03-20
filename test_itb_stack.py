@@ -206,30 +206,11 @@ class TestItbStack(unittest.TestCase):
     processed = apply_sigmoid_image(image, -1, 0.5)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_adjust_white_balance_auto(self):
+  def test_adjust_white_balance(self):
     image = generate_test_image()
-    adjusted_image = adjust_white_balance_image(image, "auto")
-    self.assertEqual(adjusted_image.shape, image.shape)
-
-  def test_adjust_white_balance_auto_temp(self):
-    image = generate_test_image()
-    adjusted_image = adjust_white_balance_image(image, "auto-temp")
-    self.assertEqual(adjusted_image.shape, image.shape)
-
-  def test_adjust_white_balance_auto_scene(self):
-    image = generate_test_image()
-    adjusted_image = adjust_white_balance_image(image, "auto-scene")
-    self.assertEqual(adjusted_image.shape, image.shape)
-
-  def test_adjust_white_balance_weights(self):
-    image = generate_test_image()
-    adjusted_image = adjust_white_balance_image(image, "10,12,11")
-    self.assertEqual(adjusted_image.shape, image.shape)
-
-  def test_adjust_white_balance_kelvin(self):
-    image = generate_test_image()
-    adjusted_image = adjust_white_balance_image(image, "5500")
-    self.assertEqual(adjusted_image.shape, image.shape)
+    for name in ["auto", "auto-temp", "auto-scene", "10,12,11", "5500", "tungsten"]:
+      processed = adjust_white_balance_image(image, name)
+      self.assertEqual(processed.shape, image.shape)
 
   def test_adjust_exposure(self):
     image = generate_test_image()
