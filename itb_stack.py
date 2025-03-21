@@ -1217,8 +1217,8 @@ def make_laplacian_pyramid(image, levels):
   return laplacian_pyr
 
 
-def merge_images_laplacian_pyramids(images, weights, pyramid_levels):
-  """Merges images by Laplacian Pyramids."""
+def merge_images_laplacian_pyramids_focus(images, weights, pyramid_levels):
+  """Merges images by Laplacian Pyramids for focus stacking."""
   weight_pyramids = [make_gaussian_pyramid(weights[i], pyramid_levels)
                      for i in range(len(images))]
   laplacian_pyramids = [make_laplacian_pyramid(images[i], pyramid_levels)
@@ -1267,7 +1267,7 @@ def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
     cv2.copyMakeBorder(wt, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
     for wt in weights
   ])
-  expanded_stacked = merge_images_laplacian_pyramids(
+  expanded_stacked = merge_images_laplacian_pyramids_focus(
     expanded_images, expanded_weights, pyramid_levels)
   stacked_image = expanded_stacked[:h, :w]
   return np.clip(stacked_image, 0, 1)
@@ -2155,7 +2155,12 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     is_hdr = True
   elif merge_name in ["focus", "f"]:
     logger.info(f"Merging images by focus stacking")
-    merged_image = merge_images_focus_stacking(images)
+    kwargs = {}
+    if "smoothness" in merge_params:
+      kwargs["smoothness"] = float(merge_params["smoothness"])
+    if "pyramid_levels" in merge_params:
+      kwargs["pyramid_levels"] = int(merge_params["pyramid_levels"])
+    merged_image = merge_images_focus_stacking(images, **kwargs)
   elif merge_name in ["grid", "g"]:
     logger.info(f"Merging images in a grid")
     kwargs = {}
