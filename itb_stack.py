@@ -1580,6 +1580,26 @@ def gaussian_blur_image(image, radius):
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
 
 
+def pyramid_blur_image(image, levels):
+  """Applies pyramid blur."""
+  h, w, c = image.shape
+  levels = min(levels, int(math.log2(min(h, w))) - 1)
+  factor = 2 ** levels
+  new_h = ((h + factor - 1) // factor) * factor
+  new_w = ((w + factor - 1) // factor) * factor
+  expanded_image = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+  reduced = expanded_image
+  pyramid = [reduced]
+  for _ in range(levels):
+    reduced = cv2.pyrDown(reduced)
+    pyramid.append(reduced)
+  restored = pyramid[-1]
+  for i in range(levels - 1, -1, -1):
+    size = (pyramid[i].shape[1], pyramid[i].shape[0])
+    restored = cv2.pyrUp(restored, dstsize=size)
+  return np.clip(restored, 0, 1)
+
+
 def gaussian_unsharp_image(image, radius):
   """Applies unsharp mask by Gaussian blur."""
   ksize = math.ceil(2 * radius) + 1
@@ -1867,7 +1887,7 @@ def make_ap_args():
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
                   help="apply bilateral denoise by the pixel radius.")
   ap.add_argument("--blur", type=int, default=0, metavar="num",
-                  help="apply Gaussian blur by the pixel radius.")
+                  help="apply Gaussian blur by the pixel radius. negative uses pyramid blur")
   ap.add_argument("--unsharp", type=int, default=0, metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
   ap.add_argument("--trim", default="", metavar="numlist",
@@ -2090,6 +2110,9 @@ def edit_image(image, args):
   if args.blur > 0:
     logger.info(f"Applying Gaussian blur")
     image = gaussian_blur_image(image, args.blur)
+  if args.blur < 0:
+    logger.info(f"Applying Pyramid blur")
+    image = pyramid_blur_image(image, -args.blur)
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
     image = gaussian_unsharp_image(image, args.unsharp)
