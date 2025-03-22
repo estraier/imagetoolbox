@@ -1345,7 +1345,7 @@ def fill_black_margin_image(image):
     image, padding, padding, padding, padding, cv2.BORDER_CONSTANT, value=(0, 0, 0))
   byte_image = (image * 255).astype(np.uint8)
   undo_bytes = byte_image.astype(np.float32)
-  float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+  float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), image)
   gray_image = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
   restore_mask = (gray_image > 0).astype(np.uint8) * 255
   restore_mask = cv2.cvtColor(restore_mask, cv2.COLOR_GRAY2BGR).astype(np.bool)
@@ -1361,7 +1361,9 @@ def fill_black_margin_image(image):
   inpainted_image = np.clip(inpainted_image.astype(np.float32) / 255, 0, 1)
   inpainted_image = cv2.GaussianBlur(inpainted_image, (5, 5), 0)
   restored = np.where(restore_mask, image, inpainted_image)
-  restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+  corrected = restored / np.maximum(float_ratio, 1e-6)
+  corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
+  restored = np.clip(corrected, 0, 1)
   trimmed = restored[padding:-padding, padding:-padding]
   return trimmed
 
@@ -1450,44 +1452,52 @@ def apply_artistic_filter_image(image, name):
     gamma_image = np.power(image, 1 / gamma)
     byte_image = (gamma_image * 255).astype(np.uint8)
     undo_bytes = byte_image.astype(np.float32)
-    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
     _, converted = cv2.pencilSketch(byte_image)
     restored = converted.astype(np.float32) / 255
-    restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+    corrected = restored / np.maximum(float_ratio, 1e-6)
+    corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
+    restored = np.clip(corrected, 0, 1)
     image = np.clip(np.power(restored, gamma), 0, 1)
   elif name == "stylized":
     gamma = 2.2
     gamma_image = np.power(image, 1 / gamma)
     byte_image = (gamma_image * 255).astype(np.uint8)
     undo_bytes = byte_image.astype(np.float32)
-    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
     converted = cv2.stylization(byte_image)
     restored = converted.astype(np.float32) / 255
-    restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+    corrected = restored / np.maximum(float_ratio, 1e-6)
+    corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
+    restored = np.clip(corrected, 0, 1)
     image = np.clip(np.power(restored, gamma), 0, 1)
   elif name == "oil":
     gamma = 2.2
     gamma_image = np.power(image, 1 / gamma)
     byte_image = (gamma_image * 255).astype(np.uint8)
     undo_bytes = byte_image.astype(np.float32)
-    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
     converted = cv2.xphoto.oilPainting(byte_image, size=7, dynRatio=1)
     restored = converted.astype(np.float32) / 255
-    restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+    corrected = restored / np.maximum(float_ratio, 1e-6)
+    corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
+    restored = np.clip(corrected, 0, 1)
     image = np.clip(np.power(restored, gamma), 0, 1)
   elif name == "cartoon":
     gamma = 1.2
     gamma_image = np.power(image, 1 / gamma)
     byte_image = (gamma_image * 255).astype(np.uint8)
     undo_bytes = byte_image.astype(np.float32)
-    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), 1)
+    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
     gray = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
     gray = cv2.medianBlur(gray, 7)
     edges = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 9, 10)
     color = cv2.bilateralFilter(byte_image, 9, 250, 250)
     converted = cv2.bitwise_and(color, color, mask=edges).astype(np.float32)
     restored = converted.astype(np.float32) / 255
-    restored = np.clip(restored / np.maximum(float_ratio, 1e-6), 0, 1)
+    corrected = restored / np.maximum(float_ratio, 1e-6)
+    corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
+    restored = np.clip(corrected, 0, 1)
     image = np.clip(np.power(restored, gamma), 0, 1)
   else:
     raise ValueError(f"Unknown artistic filter: {name}")
