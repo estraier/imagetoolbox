@@ -28,7 +28,7 @@ from itb_stack import (
   fill_black_margin_image,
   apply_global_histeq_image, apply_clahe_image,
   saturate_colors_image, apply_artistic_filter_image, convert_grayscale_image,
-  bilateral_denoise_image, gaussian_blur_image, pyramid_blur_image, gaussian_unsharp_image,
+  bilateral_denoise_image, blur_image_gaussian, blur_image_pyramid, unsharp_image_gaussian,
   perspective_correct_image, trim_image, scale_image, write_caption,
 )
 
@@ -390,19 +390,19 @@ class TestItbStack(unittest.TestCase):
     processed = bilateral_denoise_image(image, 3)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_gaussian_blur_image(self):
+  def test_blur_image_gaussian(self):
     image = generate_test_image()
-    processed = gaussian_blur_image(image, 3)
+    processed = blur_image_gaussian(image, 3)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_pyramid_blur_image(self):
+  def test_blur_image_pyramid(self):
     image = generate_test_image()
-    processed = pyramid_blur_image(image, 3)
+    processed = blur_image_pyramid(image, 3)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_gaussian_unsharp_image(self):
+  def test_unsharp_image_gaussian(self):
     image = generate_test_image()
-    processed = gaussian_unsharp_image(image, 3)
+    processed = unsharp_image_gaussian(image, 3)
     self.assertEqual(processed.shape, image.shape)
 
   def perspective_correct_image(self):

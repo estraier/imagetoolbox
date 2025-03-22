@@ -1191,7 +1191,7 @@ def compute_sharpness(image):
   sobel_y = np.abs(cv2.Sobel(blurred, cv2.CV_32F, 0, 1, ksize=3))
   sobel_e = np.sqrt(sobel_x**2 + sobel_y**2)
   sobel = z_score_normalization(sobel_e)
-  sharpness = 0.6 * laplacian + 0.4 * sobel
+  sharpness = 0.5 * laplacian + 0.5 * sobel
   sharpness = np.clip(sharpness, -10, 10)
   return sharpness
 
@@ -1558,8 +1558,8 @@ def normalize_edge_image(image):
   mean = np.mean(image)
   std = np.std(image) + 1e-20
   image = (image - mean) / std
-  low_perc = 1
-  high_perc = 99
+  low_perc = 2
+  high_perc = 98
   low_val = np.percentile(image, low_perc)
   high_val = np.percentile(image, high_perc)
   image = (image - low_val) / (high_val - low_val)
@@ -1574,15 +1574,15 @@ def bilateral_denoise_image(image, radius):
   return cv2.bilateralFilter(image, ksize, sigma_color, sigma_space)
 
 
-def gaussian_blur_image(image, radius):
+def blur_image_gaussian(image, radius):
   """Applies Gaussian blur."""
   ksize = math.ceil(2 * radius) + 1
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
 
 
-def pyramid_blur_image(image, levels):
+def blur_image_pyramid(image, levels):
   """Applies pyramid blur."""
-  h, w, c = image.shape
+  h, w = image.shape[:2]
   levels = min(levels, int(math.log2(min(h, w))) - 1)
   factor = 2 ** levels
   new_h = ((h + factor - 1) // factor) * factor
@@ -1601,7 +1601,25 @@ def pyramid_blur_image(image, levels):
   return np.clip(trimmed, 0, 1)
 
 
-def gaussian_unsharp_image(image, radius):
+def diffuse_image_pyramid(image, levels, weight=0.5):
+  """Applies pyramid diffuse."""
+  h, w = image.shape[:2]
+  levels = min(levels, int(math.log2(min(h, w))) - 1)
+  factor = 2 ** levels
+  new_h = ((h + factor - 1) // factor) * factor
+  new_w = ((w + factor - 1) // factor) * factor
+  expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+  pyramid = make_gaussian_pyramid(image, levels)
+  diffused = pyramid[-1]
+  for i in range(levels - 1, -1, -1):
+    size = (pyramid[i].shape[1], pyramid[i].shape[0])
+    diffused = cv2.pyrUp(diffused, dstsize=size)
+    diffused = (1 - weight) * pyramid[i] + weight * diffused
+  trimmed = diffused[:h, :w]
+  return np.clip(trimmed, 0, 1)
+
+
+def unsharp_image_gaussian(image, radius):
   """Applies unsharp mask by Gaussian blur."""
   ksize = math.ceil(2 * radius) + 1
   if radius == 1:
@@ -2110,13 +2128,13 @@ def edit_image(image, args):
     image = bilateral_denoise_image(image, args.denoise)
   if args.blur > 0:
     logger.info(f"Applying Gaussian blur")
-    image = gaussian_blur_image(image, args.blur)
+    image = blur_image_gaussian(image, args.blur)
   if args.blur < 0:
     logger.info(f"Applying Pyramid blur")
-    image = pyramid_blur_image(image, -args.blur)
+    image = blur_image_pyramid(image, -args.blur)
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
-    image = gaussian_unsharp_image(image, args.unsharp)
+    image = unsharp_image_gaussian(image, args.unsharp)
   if trim_params:
     logger.info(f"Trimming the image")
     image = trim_image(image, *trim_params)
