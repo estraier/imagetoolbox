@@ -1340,32 +1340,35 @@ def tone_map_image_mantiuk(image):
 
 def fill_black_margin_image(image):
   """Fills black margin on the sides with neighbor colors."""
+  assert image.dtype == np.float32
   padding = 10
-  image = cv2.copyMakeBorder(
-    image, padding, padding, padding, padding, cv2.BORDER_CONSTANT, value=(0, 0, 0))
-  byte_image = (image * 255).astype(np.uint8)
+  padded = cv2.copyMakeBorder(image, padding, padding, padding, padding,
+                              borderType=cv2.BORDER_CONSTANT, value=(0, 0, 0))
+  byte_image = (padded * 255).astype(np.uint8)
   undo_bytes = byte_image.astype(np.float32)
-  float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), image)
-  gray_image = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
-  restore_mask = (gray_image > 0).astype(np.uint8) * 255
-  restore_mask = cv2.cvtColor(restore_mask, cv2.COLOR_GRAY2BGR).astype(np.bool)
-  h, w = gray_image.shape[:2]
-  mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
-  flags = 4 | (255 << 8) | cv2.FLOODFILL_MASK_ONLY
-  cv2.floodFill(gray_image, mask, (1, 1), 255, loDiff=3, upDiff=3, flags=flags)
-  black_margin_mask = (mask[1:-1, 1:-1] == 255).astype(np.uint8) * 255
-  kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-  expanded_black_margin_mask = cv2.dilate(black_margin_mask, kernel, iterations=1)
-  inpainted_image = cv2.inpaint(byte_image, expanded_black_margin_mask, inpaintRadius=5,
-                                flags=cv2.INPAINT_TELEA)
-  inpainted_image = np.clip(inpainted_image.astype(np.float32) / 255, 0, 1)
-  inpainted_image = cv2.GaussianBlur(inpainted_image, (5, 5), 0)
-  restored = np.where(restore_mask, image, inpainted_image)
+  float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), padded)
+  gray = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
+  h, w = gray.shape
+  mask = np.zeros((h + 2, w + 2), np.uint8)
+  for x in range(w):
+    if gray[0, x] == 0:
+      cv2.floodFill(gray, mask, (x, 0), 255, flags=4)
+    if gray[h - 1, x] == 0:
+      cv2.floodFill(gray, mask, (x, h - 1), 255, flags=4)
+  for y in range(h):
+    if gray[y, 0] == 0:
+      cv2.floodFill(gray, mask, (0, y), 255, flags=4)
+    if gray[y, w - 1] == 0:
+      cv2.floodFill(gray, mask, (w - 1, y), 255, flags=4)
+  black_margin_mask = (mask[1:-1, 1:-1] == 1).astype(np.uint8)
+  inpainted = cv2.inpaint(byte_image, black_margin_mask, 5, cv2.INPAINT_TELEA)
+  inpainted = cv2.GaussianBlur(inpainted, (5, 5), 0)
+  inpainted = np.clip(inpainted.astype(np.float32) / 255.0, 0, 1)
+  restored = np.where(black_margin_mask[:, :, None] == 1, inpainted, padded)
   corrected = restored / np.maximum(float_ratio, 1e-6)
   corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
   restored = np.clip(corrected, 0, 1)
-  trimmed = restored[padding:-padding, padding:-padding]
-  return trimmed
+  return restored[padding:-padding, padding:-padding]
 
 
 def apply_global_histeq_image(image, gamma=2.2, restore_color=True):
