@@ -1580,7 +1580,7 @@ def blur_image_gaussian(image, radius):
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
 
 
-def blur_image_pyramid(image, levels):
+def blur_image_pyramid(image, levels, weight=1.0):
   """Applies pyramid blur."""
   h, w = image.shape[:2]
   levels = min(levels, int(math.log2(min(h, w))) - 1)
@@ -1588,33 +1588,12 @@ def blur_image_pyramid(image, levels):
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  reduced = expanded
-  pyramid = [reduced]
-  for _ in range(levels):
-    reduced = cv2.pyrDown(reduced)
-    pyramid.append(reduced)
-  restored = pyramid[-1]
-  for i in range(levels - 1, -1, -1):
-    size = (pyramid[i].shape[1], pyramid[i].shape[0])
-    restored = cv2.pyrUp(restored, dstsize=size)
-  trimmed = restored[:h, :w]
-  return np.clip(trimmed, 0, 1)
-
-
-def diffuse_image_pyramid(image, levels, weight=0.5):
-  """Applies pyramid diffuse."""
-  h, w = image.shape[:2]
-  levels = min(levels, int(math.log2(min(h, w))) - 1)
-  factor = 2 ** levels
-  new_h = ((h + factor - 1) // factor) * factor
-  new_w = ((w + factor - 1) // factor) * factor
-  expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  pyramid = make_gaussian_pyramid(image, levels)
+  pyramid = make_gaussian_pyramid(expanded, levels)
   diffused = pyramid[-1]
   for i in range(levels - 1, -1, -1):
     size = (pyramid[i].shape[1], pyramid[i].shape[0])
     diffused = cv2.pyrUp(diffused, dstsize=size)
-    diffused = (1 - weight) * pyramid[i] + weight * diffused
+    diffused = weight * diffused + (1 - weight) * pyramid[i]
   trimmed = diffused[:h, :w]
   return np.clip(trimmed, 0, 1)
 
