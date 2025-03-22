@@ -72,10 +72,11 @@ You can adjust brightness and contrast of the merged image manually.
 
 You can adjust contrast of the merged image automatically using histogram equalization.  If the
 parameter is positive (from 0.1 to 10.0), advanced algorithm CLAHE is used.  If the parameter is
-negative, naive global algorithm is used.
+negative, naive global algorithm is used.  If an option parameter starts with "-", use "=" as
+the separator.
 
   $ itb_stack.py input*.jpg -o output.jpg --histeq 1.2
-  $ itb_stack.py input*.jpg -o output.jpg --histeq -1
+  $ itb_stack.py input*.jpg -o output.jpg --histeq=-1
 
 Merging multiple pictures taken with high sensitivity is effective in suppressing noise.  Whereas
 median composition is widely used, the "denoise" mode provides better results in most cases.

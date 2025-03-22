@@ -1373,10 +1373,12 @@ def apply_global_histeq_image(image, gamma=2.2, restore_color=True):
   l = np.power(l / 100, 1 / gamma) * 255
   byte_l = (l).astype(np.uint8)
   undo_bytes = byte_l.astype(np.float32)
-  float_ratio = np.where(l > 0, undo_bytes / (l + 1e-6), 1)
+  float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
   new_l = cv2.equalizeHist(byte_l).astype(np.float32)
   new_l = np.power(new_l / 255, gamma) * 100
-  new_l = np.clip(new_l / np.maximum(float_ratio, 1e-6), 0, 100)
+  corrected = new_l / np.maximum(float_ratio, 1e-6)
+  corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
+  new_l = np.clip(corrected, 0, 100)
   lab = cv2.merge((new_l, a, b))
   enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
   if restore_color:
@@ -1399,12 +1401,14 @@ def apply_clahe_image(image, clip_limit, gamma=2.2, restore_color=True):
   l = np.power(l / 100, 1 / gamma) * 100
   byte_l = (l).astype(np.uint8)
   undo_bytes = byte_l.astype(np.float32)
-  float_ratio = np.where(l > 0, undo_bytes / (l + 1e-6), 1)
+  float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
   tile_grid_size = (8, 8)
   clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
   new_l = clahe.apply(byte_l).astype(np.float32)
   new_l = np.power(new_l / 100, gamma) * 100
-  new_l = np.clip(new_l / np.maximum(float_ratio, 1e-6), 0, 100)
+  corrected = new_l / np.maximum(float_ratio, 1e-6)
+  corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
+  new_l = np.clip(corrected, 0, 100)
   lab = cv2.merge((new_l, a, b))
   enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
   if restore_color:
@@ -1580,7 +1584,7 @@ def blur_image_gaussian(image, radius):
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
 
 
-def blur_image_pyramid(image, levels, decay=0.0):
+def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   """Applies pyramid blur."""
   h, w = image.shape[:2]
   levels = min(levels, int(math.log2(min(h, w))) - 1)
@@ -1597,7 +1601,12 @@ def blur_image_pyramid(image, levels, decay=0.0):
     size = (pyramid[i].shape[1], pyramid[i].shape[0])
     diffused = cv2.pyrUp(diffused, dstsize=size)
     alpha = raw_alphas[i] * decay + (1 - decay)
-    diffused = alpha * diffused + (1 - alpha) * pyramid[i]
+    rev_alpha = raw_alphas[levels - i - 1]
+    std_ref = pyramid[i].std()
+    std_diff = diffused.std()
+    gain = std_ref / (std_diff + 1e-5) * contrast
+    gain = np.clip(gain, 1.0, 2.0)
+    diffused = alpha * diffused * gain + (1 - alpha) * pyramid[i]
   trimmed = diffused[:h, :w]
   return np.clip(trimmed, 0, 1)
 
@@ -1746,9 +1755,27 @@ def write_caption(image, capexpr):
 
 
 def parse_name_opts_expression(expr):
-  """Parses alignment expression and returns key-value map."""
+  """Parses name:option expression and returns key-value map."""
   fields = re.split(r'[ ,\|:;]+', expr.strip())
   params = {"name": fields[0]}
+  for field in fields[1:]:
+    columns = field.split("=", 1)
+    name = columns[0].strip()
+    if len(columns) > 1:
+      params[name] = columns[1].strip()
+    else:
+      params[name] = "true"
+  return params
+
+
+def parse_num_opts_expression(expr, defval=0):
+  """Parses num:option expression and returns key-value map."""
+  fields = re.split(r'[ ,\|:;]+', expr.strip())
+  try:
+    num = float(fields[0])
+  except:
+    num = defval
+  params = {"num": num}
   for field in fields[1:]:
     columns = field.split("=", 1)
     name = columns[0].strip()
@@ -1877,7 +1904,7 @@ def make_ap_args():
   ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
-  ap.add_argument("--histeq", type=float, default=0, metavar="num",
+  ap.add_argument("--histeq", type=str, default="0", metavar="num",
                   help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--saturate", type=float, default=0, metavar="num",
                   help="saturate colors. positive for vivid, negative for muted")
@@ -1888,7 +1915,7 @@ def make_ap_args():
                   " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel")
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
                   help="apply bilateral denoise by the pixel radius.")
-  ap.add_argument("--blur", type=int, default=0, metavar="num",
+  ap.add_argument("--blur", type=str, default="0", metavar="num",
                   help="apply Gaussian blur by the pixel radius. negative uses pyramid blur")
   ap.add_argument("--unsharp", type=int, default=0, metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
@@ -2076,9 +2103,6 @@ def log_image_stats(image, prefix):
 
 def edit_image(image, args):
   """Edits an image."""
-  trim_params = parse_trim_expression(args.trim)
-  pers_params = parse_pers_expression(args.pers)
-  scale_params = parse_scale_expression(args.scale)
   if args.fill_margin:
     logger.info(f"Filling the margin")
     image = fill_black_margin_image(image)
@@ -2091,12 +2115,24 @@ def edit_image(image, args):
   if args.sigmoid != 0:
     logger.info(f"Adjust brightness by a sigmoid")
     image = apply_sigmoid_image(image, args.sigmoid, 0.5)
-  if args.histeq > 0:
+  histeq_params = parse_num_opts_expression(args.histeq)
+  histeq_num = histeq_params["num"]
+  if histeq_num > 0:
     logger.info(f"Applying CLAHE enhancement")
-    image = apply_clahe_image(image, args.histeq)
-  elif args.histeq < 0:
+    kwargs = {}
+    if "gamma" in histeq_params:
+      kwargs["gamma"] = float(histeq_params["gamma"])
+    if "no-restore_color" in histeq_params:
+      kwargs["restore_color"] = False
+    image = apply_clahe_image(image, histeq_num, **kwargs)
+  elif histeq_num < 0:
     logger.info(f"Applying global HE enhancement")
-    image = apply_global_histeq_image(image)
+    kwargs = {}
+    if "gamma" in histeq_params:
+      kwargs["gamma"] = float(histeq_params["gamma"])
+    if "no-restore_color" in histeq_params:
+      kwargs["restore_color"] = False
+    image = apply_global_histeq_image(image, **kwargs)
   if args.saturate != 0:
     logger.info(f"Saturating colors")
     image = saturate_colors_image(image, args.saturate)
@@ -2109,21 +2145,31 @@ def edit_image(image, args):
   if args.denoise > 0:
     logger.info(f"Applying birateral denoise")
     image = bilateral_denoise_image(image, args.denoise)
-  if args.blur > 0:
+  blur_params = parse_num_opts_expression(args.blur)
+  blur_num = blur_params["num"]
+  if blur_num > 0:
     logger.info(f"Applying Gaussian blur")
-    image = blur_image_gaussian(image, args.blur)
-  if args.blur < 0:
+    image = blur_image_gaussian(image, blur_num)
+  if blur_num < 0:
     logger.info(f"Applying Pyramid blur")
-    image = blur_image_pyramid(image, -args.blur)
+    kwargs = {}
+    if "decay" in blur_params:
+      kwargs["decay"] = float(blur_params["decay"])
+    if "contrast" in blur_params:
+      kwargs["contrast"] = int(blur_params["contrast"])
+    image = blur_image_pyramid(image, int(blur_num) * -1, **kwargs)
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
     image = unsharp_image_gaussian(image, args.unsharp)
+  trim_params = parse_trim_expression(args.trim)
   if trim_params:
     logger.info(f"Trimming the image")
     image = trim_image(image, *trim_params)
+  pers_params = parse_pers_expression(args.pers)
   if pers_params:
     logger.info(f"Doing perspective correction of the image")
     image = perspective_correct_image(image, *pers_params)
+  scale_params = parse_scale_expression(args.scale)
   if scale_params:
     logger.info(f"Scaling the image")
     if scale_params[1] is None:
