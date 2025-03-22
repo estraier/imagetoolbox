@@ -1269,8 +1269,8 @@ def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
   ])
   expanded_stacked = merge_images_laplacian_pyramids_focus(
     expanded_images, expanded_weights, pyramid_levels)
-  stacked_image = expanded_stacked[:h, :w]
-  return np.clip(stacked_image, 0, 1)
+  trimmed = expanded_stacked[:h, :w]
+  return np.clip(trimmed, 0, 1)
 
 
 def merge_images_grid(images, columns=1, margin=0, background=(0.5, 0.5, 0.5)):
@@ -1587,8 +1587,8 @@ def pyramid_blur_image(image, levels):
   factor = 2 ** levels
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
-  expanded_image = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  reduced = expanded_image
+  expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+  reduced = expanded
   pyramid = [reduced]
   for _ in range(levels):
     reduced = cv2.pyrDown(reduced)
@@ -1597,7 +1597,8 @@ def pyramid_blur_image(image, levels):
   for i in range(levels - 1, -1, -1):
     size = (pyramid[i].shape[1], pyramid[i].shape[0])
     restored = cv2.pyrUp(restored, dstsize=size)
-  return np.clip(restored, 0, 1)
+  trimmed = restored[:h, :w]
+  return np.clip(trimmed, 0, 1)
 
 
 def gaussian_unsharp_image(image, radius):
