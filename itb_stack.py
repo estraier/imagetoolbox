@@ -95,6 +95,7 @@ def load_image(file_path):
 
 def save_image(file_path, image, bits):
   """Saves an image after converting it from linear RGB to sRGB."""
+  assert image.dtype == np.float32
   logger.debug(f"saving image: {file_path}")
   image = linear_to_srgb(image)
   ext = os.path.splitext(file_path)[1].lower()
@@ -179,6 +180,7 @@ def load_video(file_path, mem_allowance, input_fps):
 
 def save_video(file_path, images, output_fps):
   """Saves a video of images."""
+  assert all(image.dtype == np.float32 for image in images)
   logger.debug(f"saving video: {file_path}")
   h, w = images[0].shape[:2]
   ext = os.path.splitext(file_path)[-1].lower()
@@ -225,12 +227,14 @@ def load_npz(file_path, mem_allowance):
 
 def save_npz(file_path, images):
   """Saves an NPZ archive file of images."""
+  assert all(image.dtype == np.float32 for image in images)
   logger.debug(f"saving NPZ: {file_path}")
   np.savez_compressed(file_path, *images)
 
 
 def estimate_image_memory_size(image):
   """Estimates memory size of an image."""
+  assert image.dtype == np.float32
   height, width = image.shape[:2]
   channels = 3
   depth = 4
@@ -318,6 +322,7 @@ def copy_metadata(source_path, target_path):
 
 def srgb_to_linear(image):
   """Converts sRGB to linear RGB using OpenCV (optimized for float32)."""
+  assert image.dtype == np.float32
   image = np.where(image <= 0.04045,
                    image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
   return image.astype(np.float32)
@@ -325,6 +330,7 @@ def srgb_to_linear(image):
 
 def linear_to_srgb(image):
   """Converts linear RGB to sRGB using OpenCV (optimized for float32)."""
+  assert image.dtype == np.float32
   image = np.where(image <= 0.0031308,
                    image * 12.92, 1.055 * cv2.pow(image, 1/2.4) - 0.055)
   return image.astype(np.float32)
@@ -332,11 +338,13 @@ def linear_to_srgb(image):
 
 def compute_brightness(image):
   """Computes the average brightness of an image in grayscale."""
+  assert image.dtype == np.float32
   return np.mean(cv2.cvtColor(image.astype(np.float32), cv2.COLOR_BGR2GRAY))
 
 
 def apply_gamma_image(image, gamma):
   """Adjusts image brightness by a gamma transformation."""
+  assert image.dtype == np.float32
   if gamma < 1e-6:
     return image
   image = np.power(image, 1 / gamma)
@@ -345,6 +353,7 @@ def apply_gamma_image(image, gamma):
 
 def apply_scaled_log_image(image, factor):
   """Adjust image brightness by a scaled log transformation."""
+  assert image.dtype == np.float32
   if factor > 1e-6:
     image = np.log1p(image * factor) / np.log1p(factor)
   elif factor < -1e-6:
@@ -369,6 +378,7 @@ def naive_inverse_sigmoid(x, gain, mid):
 
 def sigmoidal_contrast_image(image, gain, mid):
   """Applies sigmoidal contrast adjustment with a scaled sigmoid function."""
+  assert image.dtype == np.float32
   min_val = naive_sigmoid(0.0, gain, mid)
   max_val = naive_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
@@ -377,6 +387,7 @@ def sigmoidal_contrast_image(image, gain, mid):
 
 def inverse_sigmoidal_contrast_image(image, gain, mid):
   """Applies inverse sigmoidal contrast adjustment."""
+  assert image.dtype == np.float32
   min_val = naive_inverse_sigmoid(0.0, gain, mid)
   max_val = naive_inverse_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
@@ -385,6 +396,7 @@ def inverse_sigmoidal_contrast_image(image, gain, mid):
 
 def apply_sigmoid_image(image, gain, mid):
   """Adjust image brightness by a sigmoid transformation."""
+  assert image.dtype == np.float32
   if gain > 1e-6:
     min_val = naive_sigmoid(0.0, gain, mid)
     max_val = naive_sigmoid(1.0, gain, mid)
@@ -401,6 +413,7 @@ def apply_sigmoid_image(image, gain, mid):
 
 def compute_auto_white_balance_factors(image, edge_weight=0.5, luminance_weight=0.5):
   """Computes the mean values for RGB channels for auto white balance."""
+  assert image.dtype == np.float32
   image = cv2.GaussianBlur(image, (5, 5), 0)
   max_area = 1000000
   current_area = image.shape[0] * image.shape[1]
@@ -563,6 +576,7 @@ def convert_rgb_to_kelvin(r, g, b):
 
 def adjust_white_balance_image(image, expr="auto"):
   """Adjusts the white balance of an image."""
+  assert image.dtype == np.float32
   WB_PRESETS = {
     "daylight": (1.1, 1.0, 0.9),
     "cloudy": (1.2, 1.0, 0.8),
@@ -643,6 +657,7 @@ def adjust_white_balance_image(image, expr="auto"):
 
 def adjust_exposure_image(image, target_brightness, max_tries=10, max_dist=0.01):
   """Adjusts the exposure of an image to a target brightness."""
+  assert image.dtype == np.float32
   brightness = compute_brightness(image) + 1e-6
   dist = abs(np.log(target_brightness / brightness))
   logger.debug(f"tries=0, gain=0.000, dist={dist:.3f},"
@@ -718,6 +733,7 @@ def log_homography_matrix(m):
 
 def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
   """Make a byte-gray enhanced image for alignment."""
+  assert image.dtype == np.float32
   gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
   if denoise > 0:
     ksize = math.ceil(2 * denoise) + 1
@@ -734,6 +750,7 @@ def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
 
 def align_images_orb(images, aligned_indices, nfeatures=5000, denoise=2, shift_limit=0.1):
   """Aligns images using ORB."""
+  assert all(image.dtype == np.float32 for image in images)
   if len(images) < 2:
     return images
   ref_image = images[0]
@@ -836,6 +853,7 @@ def align_images_orb(images, aligned_indices, nfeatures=5000, denoise=2, shift_l
 
 def align_images_sift(images, aligned_indices, nfeatures=30000, denoise=2, shift_limit=0.1):
   """Aligns images using SIFT."""
+  assert all(image.dtype == np.float32 for image in images)
   if len(images) < 2:
     return images
   ref_image = images[0]
@@ -935,6 +953,8 @@ def align_images_sift(images, aligned_indices, nfeatures=30000, denoise=2, shift
 
 
 def align_images_ecc(images, aligned_indices, use_affine=True, denoise=3):
+  """Aligns images using ECC."""
+  assert all(image.dtype == np.float32 for image in images)
   if len(images) < 2:
     return images
   ref_image = images[0]
@@ -1002,6 +1022,7 @@ def align_images_ecc(images, aligned_indices, use_affine=True, denoise=3):
 
 def align_images_hugin(images, input_paths, bits_list):
   """Aligns images using Hugin."""
+  assert all(image.dtype == np.float32 for image in images)
   if len(images) < 2:
     return images
   temp_dir = tempfile.gettempdir()
@@ -1036,36 +1057,43 @@ def align_images_hugin(images, input_paths, bits_list):
 
 def fix_overflown_image(image):
   """Replaces NaN and -inf with 0, and inf with 1."""
+  assert image.dtype == np.float32
   return np.clip(np.nan_to_num(image, nan=0.0, posinf=1.0, neginf=0.0), 0, None)
 
 
 def merge_images_average(images):
   """Merges images by average composition."""
+  assert all(image.dtype == np.float32 for image in images)
   return np.mean(images, axis=0)
 
 
 def merge_images_median(images):
   """Merges images by median composition."""
+  assert all(image.dtype == np.float32 for image in images)
   return np.median(images, axis=0)
 
 
 def merge_images_geometric_mean(images):
   """Merges images by geoemtric_mean composition."""
+  assert all(image.dtype == np.float32 for image in images)
   return np.exp(np.mean(np.log(np.clip(images, 1e-6, 1)), axis=0))
 
 
 def merge_images_minimum(images):
   """Merges images by minimum value composition."""
+  assert all(image.dtype == np.float32 for image in images)
   return np.min(images, axis=0)
 
 
 def merge_images_maximum(images):
   """Merges images by maximum value composition."""
+  assert all(image.dtype == np.float32 for image in images)
   return np.max(images, axis=0)
 
 
 def merge_images_denoise(images, clip_limit=0.4, blur_radius=3):
   """Merge images by blurred geometric mean-based median."""
+  assert all(image.dtype == np.float32 for image in images)
   images = np.stack(images, axis=3).astype(np.float32)
   h, w, c, n = images.shape
   ksize = math.ceil(2 * blur_radius) + 1
@@ -1111,6 +1139,7 @@ def calculate_stf_weights(f_numbers):
 
 def merge_images_weighted_average(images, meta_list):
   """Merges images by weighted average composition."""
+  assert all(image.dtype == np.float32 for image in images)
   f_numbers = [meta.get("_fv_") for meta in meta_list]
   if None in f_numbers:
     logger.debug(f"missing F-numbers")
@@ -1123,6 +1152,7 @@ def merge_images_weighted_average(images, meta_list):
 
 def merge_images_debevec(images, meta_list):
   """Merges images by Debevec's method."""
+  assert all(image.dtype == np.float32 for image in images)
   light_values = [get_light_value(meta) for meta in meta_list]
   if None in light_values:
     brightness_values = np.array([compute_brightness(image) for image in images])
@@ -1139,6 +1169,7 @@ def merge_images_debevec(images, meta_list):
 
 def merge_images_robertson(images, meta_list):
   """Merges images by Robertson's method."""
+  assert all(image.dtype == np.float32 for image in images)
   light_values = [get_light_value(meta) for meta in meta_list]
   if None in light_values:
     brightness_values = np.array([compute_brightness(image) for image in images])
@@ -1155,6 +1186,7 @@ def merge_images_robertson(images, meta_list):
 
 def merge_images_mertens(images):
   """Merges images by Mertens's method."""
+  assert all(image.dtype == np.float32 for image in images)
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
   merger = cv2.createMergeMertens()
@@ -1165,6 +1197,7 @@ def merge_images_mertens(images):
 
 def normalize_negative_image(image, clip_percentile=2.0):
   """Normalizes negaive pixels."""
+  assert image.dtype == np.float32
   image = cv2.GaussianBlur(image, (5, 5), 0)
   min_val = np.percentile(image, clip_percentile)
   if min_val > -0.01:
@@ -1176,6 +1209,7 @@ def normalize_negative_image(image, clip_percentile=2.0):
 
 def z_score_normalization(image):
   """Applies Z-score normalization to stabilize feature scaling."""
+  assert image.dtype == np.float32
   mean = np.mean(image)
   std = np.std(image)
   return (image - mean) / (std + 1e-6)
@@ -1183,6 +1217,7 @@ def z_score_normalization(image):
 
 def compute_sharpness(image):
   """Computes sharpness using normalized Laplacian and Sobel filters."""
+  assert image.dtype == np.float32
   gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
   blurred = cv2.GaussianBlur(gray, (5, 5), 0)
   laplacian = np.abs(cv2.Laplacian(blurred, cv2.CV_32F, ksize=3))
@@ -1198,6 +1233,7 @@ def compute_sharpness(image):
 
 def make_gaussian_pyramid(image, levels):
   """Generate Gaussian pyramid."""
+  assert image.dtype == np.float32
   pyramid = [image]
   for _ in range(levels):
     image = cv2.pyrDown(image)
@@ -1207,6 +1243,7 @@ def make_gaussian_pyramid(image, levels):
 
 def make_laplacian_pyramid(image, levels):
   """Generate Laplacian pyramid."""
+  assert image.dtype == np.float32
   gaussian_pyr = make_gaussian_pyramid(image, levels)
   laplacian_pyr = []
   for i in range(levels):
@@ -1219,6 +1256,7 @@ def make_laplacian_pyramid(image, levels):
 
 def merge_images_laplacian_pyramids_focus(images, weights, pyramid_levels):
   """Merges images by Laplacian Pyramids for focus stacking."""
+  assert all(image.dtype == np.float32 for image in images)
   weight_pyramids = [make_gaussian_pyramid(weights[i], pyramid_levels)
                      for i in range(len(images))]
   laplacian_pyramids = [make_laplacian_pyramid(images[i], pyramid_levels)
@@ -1240,6 +1278,7 @@ def merge_images_laplacian_pyramids_focus(images, weights, pyramid_levels):
 
 def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
   """Merges images by focus stacking."""
+  assert all(image.dtype == np.float32 for image in images)
   h, w, c = images[0].shape
   pyramid_levels = min(pyramid_levels, int(math.log2(min(h, w))) - 3)
   sharpness_maps = np.array([compute_sharpness(img) for img in images])
@@ -1275,6 +1314,7 @@ def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
 
 def merge_images_grid(images, columns=1, margin=0, background=(0.5, 0.5, 0.5)):
   """Merges images in a grid."""
+  assert all(image.dtype == np.float32 for image in images)
   num_images = len(images)
   rows = (num_images + columns - 1) // columns
   widths = [0] * columns
@@ -1303,6 +1343,7 @@ def merge_images_grid(images, columns=1, margin=0, background=(0.5, 0.5, 0.5)):
 
 def merge_images_stitch(images):
   """Stitches images as a panoramic photo and removes black margins."""
+  assert all(image.dtype == np.float32 for image in images)
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8) for image in images]
   stitcher = cv2.Stitcher_create()
   status, stitched_image = stitcher.stitch(byte_images)
@@ -1313,11 +1354,13 @@ def merge_images_stitch(images):
 
 def tone_map_image_linear(image):
   """Applies tone mapping by linear normalization."""
+  assert image.dtype == np.float32
   return cv2.normalize(image, None, 0, 1, cv2.NORM_MINMAX).astype(np.float32)
 
 
 def tone_map_image_reinhard(image):
   """Applies tone mapping by Reinhard's method."""
+  assert image.dtype == np.float32
   tonemap = cv2.createTonemapReinhard(gamma=1.0, intensity=0, light_adapt=0.5,
                                       color_adapt=0.5)
   ldr = np.clip(tonemap.process(image), 0, 1)
@@ -1326,6 +1369,7 @@ def tone_map_image_reinhard(image):
 
 def tone_map_image_drago(image):
   """Applies tone mapping by Drago's method."""
+  assert image.dtype == np.float32
   tonemap = cv2.createTonemapDrago(gamma=1.0, saturation=1.0, bias=0.9)
   ldr = np.clip(tonemap.process(image), 0, 1)
   return ldr
@@ -1333,6 +1377,7 @@ def tone_map_image_drago(image):
 
 def tone_map_image_mantiuk(image):
   """Applies tone mapping by Mantiuk's method."""
+  assert image.dtype == np.float32
   tonemap = cv2.createTonemapMantiuk(gamma=1.0, scale=0.9, saturation=1.0)
   ldr = np.clip(tonemap.process(image), 0, 1)
   return ldr
@@ -1373,6 +1418,7 @@ def fill_black_margin_image(image):
 
 def apply_global_histeq_image(image, gamma=2.2, restore_color=True):
   """Applies global histogram equalization contrast enhancement."""
+  assert image.dtype == np.float32
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
   l = np.power(l / 100, 1 / gamma) * 255
@@ -1401,6 +1447,7 @@ def apply_global_histeq_image(image, gamma=2.2, restore_color=True):
 
 def apply_clahe_image(image, clip_limit, gamma=2.2, restore_color=True):
   """Applies CLAHE contrast enhancement."""
+  assert image.dtype == np.float32
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
   l = np.power(l / 100, 1 / gamma) * 100
@@ -1431,6 +1478,7 @@ def apply_clahe_image(image, clip_limit, gamma=2.2, restore_color=True):
 
 def saturate_colors_image(image, factor):
   """Saturates colors of the image by applying a scaled log transformation."""
+  assert image.dtype == np.float32
   if factor > 1e-6:
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
@@ -1449,6 +1497,7 @@ def saturate_colors_image(image, factor):
 
 def apply_artistic_filter_image(image, name):
   """Applies an artistic filter."""
+  assert image.dtype == np.float32
   name = name.strip().lower()
   if name == "pencil":
     gamma = 2.2
@@ -1509,6 +1558,7 @@ def apply_artistic_filter_image(image, name):
 
 def convert_grayscale_image(image, name):
   """Converts the image into grayscale."""
+  assert image.dtype == np.float32
   confs = [(("bt601", "601", "gray"), (0.299, 0.587, 0.114)),
            (("bt709", "709"), (0.2126, 0.7152, 0.0722)),
            (("bt2020", "2020"), (0.2627, 0.6780, 0.0593)),
@@ -1571,6 +1621,7 @@ def convert_grayscale_image(image, name):
 
 def normalize_edge_image(image):
   """Normalized edge image to be [0,1]."""
+  assert image.dtype == np.float32
   image = np.abs(image)
   mean = np.mean(image)
   std = np.std(image) + 1e-20
@@ -1585,6 +1636,7 @@ def normalize_edge_image(image):
 
 def bilateral_denoise_image(image, radius):
   """Applies bilateral denoise."""
+  assert image.dtype == np.float32
   ksize = math.ceil(2 * radius) + 1
   sigma_color = min(0.05 * math.sqrt(ksize), 0.35)
   sigma_space = 10 * math.sqrt(ksize)
@@ -1593,12 +1645,14 @@ def bilateral_denoise_image(image, radius):
 
 def blur_image_gaussian(image, radius):
   """Applies Gaussian blur."""
+  assert image.dtype == np.float32
   ksize = math.ceil(2 * radius) + 1
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
 
 
 def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   """Applies pyramid blur."""
+  assert image.dtype == np.float32
   h, w = image.shape[:2]
   levels = min(levels, int(math.log2(min(h, w))) - 1)
   factor = 2 ** levels
@@ -1624,8 +1678,22 @@ def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   return np.clip(trimmed, 0, 1)
 
 
+def blur_image_portrait(image, levels):
+  """Applies portrait blur."""
+
+
+  # dummpy assert image.dtype == np.float32
+
+
+
+
+
+  return image
+
+
 def unsharp_image_gaussian(image, radius):
   """Applies unsharp mask by Gaussian blur."""
+  assert image.dtype == np.float32
   ksize = math.ceil(2 * radius) + 1
   if radius == 1:
     sigma = 0.8
@@ -1645,6 +1713,7 @@ def unsharp_image_gaussian(image, radius):
 
 def trim_image(image, top, right, bottom, left):
   """Trims a image by percentages from sides."""
+  assert image.dtype == np.float32
   h, w = image.shape[:2]
   top_px = int(h * top)
   right_px = int(w * right)
@@ -1660,6 +1729,7 @@ def trim_image(image, top, right, bottom, left):
 
 def perspective_correct_image(image, tl, tr, br, bl):
   """Apply perspective correction on the image."""
+  assert image.dtype == np.float32
   h, w = image.shape[:2]
   def ratio_to_pixels(rx, ry):
     return int(rx * w), int(ry * h)
@@ -1676,6 +1746,7 @@ def perspective_correct_image(image, tl, tr, br, bl):
 
 def get_scaled_image_size(image, long_size):
   """Gets the new width and height if an image is scaled."""
+  assert image.dtype == np.float32
   h, w = image.shape[:2]
   if h > w:
     scale = long_size / h
@@ -1688,6 +1759,7 @@ def get_scaled_image_size(image, long_size):
 
 def scale_image(image, width, height):
   """Scales the image into the new geometry."""
+  assert image.dtype == np.float32
   h, w = image.shape[:2]
   if width * height > h * w:
     interpolation = cv2.INTER_LANCZOS4
@@ -1930,6 +2002,8 @@ def make_ap_args():
                   help="apply bilateral denoise by the pixel radius.")
   ap.add_argument("--blur", type=str, default="0", metavar="num",
                   help="apply Gaussian blur by the pixel radius. negative uses pyramid blur")
+  ap.add_argument("--portrait", type=str, default="0", metavar="num",
+                  help="apply portrait blur by the pyramid level")
   ap.add_argument("--unsharp", type=int, default=0, metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
   ap.add_argument("--trim", default="", metavar="numlist",
@@ -2078,6 +2152,7 @@ def load_input_images(args):
 
 def postprocess_npz(args, images):
   """Postprocess images as a NumPy compressed."""
+  assert all(image.dtype == np.float32 for image in images)
   images = [edit_image(image, args) for image in images]
   logger.info(f"Saving the output file as a NumPy compressed")
   save_npz(args.output, images)
@@ -2085,6 +2160,7 @@ def postprocess_npz(args, images):
 
 def postprocess_video(args, images):
   """Postprocess images as a video."""
+  assert all(image.dtype == np.float32 for image in images)
   images = [edit_image(image, args) for image in images]
   logger.info(f"Saving the output file as a video")
   save_video(args.output, images, args.output_video_fps)
@@ -2095,6 +2171,7 @@ def postprocess_video(args, images):
 
 def crop_to_match(image, target_size):
   """Crops the center of the image to match the target size."""
+  assert image.dtype == np.float32
   h, w = image.shape[:2]
   th, tw = target_size
   y_offset = max((h - th) // 2, 0)
@@ -2103,6 +2180,8 @@ def crop_to_match(image, target_size):
 
 
 def log_image_stats(image, prefix):
+  """prints logs of an image."""
+  assert image.dtype == np.float32
   has_nan = np.isnan(image).any()
   if has_nan:
     image = fix_overflown_image(image)
@@ -2116,6 +2195,7 @@ def log_image_stats(image, prefix):
 
 def edit_image(image, args):
   """Edits an image."""
+  assert image.dtype == np.float32
   if args.fill_margin:
     logger.info(f"Filling the margin")
     image = fill_black_margin_image(image)
@@ -2171,6 +2251,11 @@ def edit_image(image, args):
     if "contrast" in blur_params:
       kwargs["contrast"] = int(blur_params["contrast"])
     image = blur_image_pyramid(image, int(blur_num) * -1, **kwargs)
+  portrait_params = parse_num_opts_expression(args.portrait)
+  portrait_num = portrait_params["num"]
+  if portrait_num > 0:
+    logger.info(f"Applying portrait blur")
+    image = blur_image_portrait(image, int(blur_num))
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
     image = unsharp_image_gaussian(image, args.unsharp)
@@ -2196,6 +2281,7 @@ def edit_image(image, args):
 
 def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   """Postprocesses images as a merged image."""
+  assert image.dtype == np.float32
   merge_params = parse_name_opts_expression(args.merge)
   merge_name = merge_params["name"]
   is_hdr = False
