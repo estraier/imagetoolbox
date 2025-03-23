@@ -1701,7 +1701,7 @@ def blur_image_portrait_stack(image, levels, decay=0.0, contrast=1.0):
   return np.mean(images, axis=0)
 
 
-def blur_image_portrait(image, levels, decay=0.0, contrast=1.0):
+def blur_image_portrait(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.85):
   """Applies edge-aware pyramid blur that avoids edge bleeding and softly restores edges using Laplacian pyramid."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
@@ -1725,14 +1725,14 @@ def blur_image_portrait(image, levels, decay=0.0, contrast=1.0):
   # Full-resolution sharpness and edge mask
   sharp_full = compute_sharpness(expanded)
   sharp_full = percentile_normalization(sharp_full, 2, 98)
-  edge0 = (sharp_full > 0.85).astype(np.float32)
+  edge_full = (sharp_full > edge_threshold).astype(np.float32)
 
   # Edge mask pyramid (strong edges only)
-  edge_pyr = [edge0]
+  edge_pyr = [edge_full]
   for lvl in range(levels):
     sharp_lvl = compute_sharpness(gauss_pyr[lvl + 1])
     sharp_lvl = percentile_normalization(sharp_lvl, 2, 98)
-    edge_lvl = (sharp_lvl > 0.85).astype(np.float32)
+    edge_lvl = (sharp_lvl > edge_threshold).astype(np.float32)
     prev = cv2.pyrDown(edge_pyr[-1], dstsize=(edge_lvl.shape[1], edge_lvl.shape[0]))
     edge_comb = np.clip(prev + edge_lvl, 0, 1)
     edge_pyr.append(edge_comb)
