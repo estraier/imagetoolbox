@@ -1215,20 +1215,40 @@ def z_score_normalization(image):
   return (image - mean) / (std + 1e-6)
 
 
-def compute_sharpness(image):
+def percentile_normalization(image, low=1, high=99):
+  """Applies percentile normalization to adjust domain into [0,1]."""
+  assert image.dtype == np.float32
+  low_val = np.percentile(image, low)
+  high_val = np.percentile(image, high)
+  image = (image - low_val) / (high_val - low_val)
+  return image
+
+
+def compute_sharpness(image, base_area=1000000, blur_ksize=5):
   """Computes sharpness using normalized Laplacian and Sobel filters."""
   assert image.dtype == np.float32
   gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-  blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-  laplacian = np.abs(cv2.Laplacian(blurred, cv2.CV_32F, ksize=3))
+  h, w = gray.shape[:2]
+  area = h * w
+  is_scaled = False
+  if area > base_area * 2:
+    scale = (base_area / area) ** 0.5
+    gray = cv2.resize(gray, (math.ceil(w * scale), math.ceil(h * scale)),
+                      interpolation=cv2.INTER_AREA)
+    is_scaled = True
+  if blur_ksize > 1:
+    gray = cv2.GaussianBlur(gray, (blur_ksize, blur_ksize), 0)
+  laplacian = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
   laplacian = z_score_normalization(laplacian)
-  sobel_x = np.abs(cv2.Sobel(blurred, cv2.CV_32F, 1, 0, ksize=3))
-  sobel_y = np.abs(cv2.Sobel(blurred, cv2.CV_32F, 0, 1, ksize=3))
+  sobel_x = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
+  sobel_y = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
   sobel_e = np.sqrt(sobel_x**2 + sobel_y**2)
   sobel = z_score_normalization(sobel_e)
   sharpness = 0.5 * laplacian + 0.5 * sobel
-  sharpness = np.clip(sharpness, -10, 10)
-  return sharpness
+  if is_scaled:
+    sharpness = cv2.resize(sharpness, (w, h), interpolation=cv2.INTER_LANCZOS4)
+  sharpness = z_score_normalization(sharpness)
+  return np.clip(sharpness, -10, 10)
 
 
 def make_gaussian_pyramid(image, levels):
@@ -1279,7 +1299,7 @@ def merge_images_laplacian_pyramids_focus(images, weights, pyramid_levels):
 def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
   """Merges images by focus stacking."""
   assert all(image.dtype == np.float32 for image in images)
-  h, w, c = images[0].shape
+  h, w = images[0].shape[:2]
   pyramid_levels = min(pyramid_levels, int(math.log2(min(h, w))) - 3)
   sharpness_maps = np.array([compute_sharpness(img) for img in images])
   images_array = np.stack(images, axis=0)
@@ -1599,7 +1619,7 @@ def convert_grayscale_image(image, name):
     return np.clip(gray_image, 0, 1)
   elif name in ["laplacian"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    gray_image = cv2.Laplacian(gray_image, cv2.CV_32F)
+    gray_image = np.abs(cv2.Laplacian(gray_image, cv2.CV_32F))
     gray_image = normalize_edge_image(gray_image)
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
@@ -1622,16 +1642,9 @@ def convert_grayscale_image(image, name):
 def normalize_edge_image(image):
   """Normalized edge image to be [0,1]."""
   assert image.dtype == np.float32
-  image = np.abs(image)
-  mean = np.mean(image)
-  std = np.std(image) + 1e-20
-  image = (image - mean) / std
-  low_perc = 2
-  high_perc = 98
-  low_val = np.percentile(image, low_perc)
-  high_val = np.percentile(image, high_perc)
-  image = (image - low_val) / (high_val - low_val)
-  return np.clip(image, 0, 1).astype(np.float32)
+  image = z_score_normalization(image)
+  image = percentile_normalization(image, 2, 98)
+  return np.clip(image, 0, 1)
 
 
 def bilateral_denoise_image(image, radius):
@@ -1671,24 +1684,39 @@ def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
     rev_alpha = raw_alphas[levels - i - 1]
     std_ref = pyramid[i].std()
     std_diff = diffused.std()
-    gain = std_ref / (std_diff + 1e-5) * contrast
+    gain = std_ref / (std_diff + 1e-6) * contrast
     gain = np.clip(gain, 1.0, 2.0)
     diffused = alpha * diffused * gain + (1 - alpha) * pyramid[i]
   trimmed = diffused[:h, :w]
   return np.clip(trimmed, 0, 1)
 
 
-def blur_image_portrait(image, levels):
+def blur_image_portrait(image, levels, decay=0):
   """Applies portrait blur."""
-
-
-  # dummpy assert image.dtype == np.float32
-
-
-
-
-
-  return image
+  assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  levels = min(levels, int(math.log2(min(h, w))) - 1)
+  factor = 2 ** levels
+  new_h = ((h + factor - 1) // factor) * factor
+  new_w = ((w + factor - 1) // factor) * factor
+  expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+  pyramid = make_gaussian_pyramid(expanded, levels)
+  diffused = pyramid[-1]
+  bokehs = [2 ** i for i in range(levels - 1, -1, -1)]
+  sum_bokehs = sum(bokehs)
+  raw_alphas = [b / sum_bokehs for b in bokehs]
+  for i in range(levels - 1, -1, -1):
+    size = (pyramid[i].shape[1], pyramid[i].shape[0])
+    diffused = cv2.pyrUp(diffused, dstsize=size)
+    alpha = raw_alphas[i] * decay + (1 - decay)
+    rev_alpha = raw_alphas[levels - i - 1]
+    std_ref = pyramid[i].std()
+    std_diff = diffused.std()
+    gain = std_ref / (std_diff + 1e-6)
+    gain = np.clip(gain, 1.0, 2.0)
+    diffused = alpha * diffused * gain + (1 - alpha) * pyramid[i]
+  trimmed = diffused[:h, :w]
+  return np.clip(trimmed, 0, 1)
 
 
 def unsharp_image_gaussian(image, radius):
@@ -1765,7 +1793,7 @@ def scale_image(image, width, height):
     interpolation = cv2.INTER_LANCZOS4
   else:
     interpolation = cv2.INTER_AREA
-  return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+  return cv2.resize(image, (width, height), interpolation=interpolation)
 
 
 def parse_color_expr(expr):
@@ -2255,7 +2283,7 @@ def edit_image(image, args):
   portrait_num = portrait_params["num"]
   if portrait_num > 0:
     logger.info(f"Applying portrait blur")
-    image = blur_image_portrait(image, int(blur_num))
+    image = blur_image_portrait(image, int(portrait_num))
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
     image = unsharp_image_gaussian(image, args.unsharp)
@@ -2281,7 +2309,7 @@ def edit_image(image, args):
 
 def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   """Postprocesses images as a merged image."""
-  assert image.dtype == np.float32
+  assert all(image.dtype == np.float32 for image in images)
   merge_params = parse_name_opts_expression(args.merge)
   merge_name = merge_params["name"]
   is_hdr = False
