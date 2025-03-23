@@ -1224,7 +1224,7 @@ def percentile_normalization(image, low=1, high=99):
   return image
 
 
-def compute_sharpness(image, base_area=1000000, blur_ksize=5):
+def compute_sharpness(image, base_area=1000000, blur_radius=2):
   """Computes sharpness using normalized Laplacian and Sobel filters."""
   assert image.dtype == np.float32
   gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -1236,8 +1236,9 @@ def compute_sharpness(image, base_area=1000000, blur_ksize=5):
     gray = cv2.resize(gray, (math.ceil(w * scale), math.ceil(h * scale)),
                       interpolation=cv2.INTER_AREA)
     is_scaled = True
-  if blur_ksize > 1:
-    gray = cv2.GaussianBlur(gray, (blur_ksize, blur_ksize), 0)
+  if blur_radius > 1:
+    ksize = math.ceil(2 * blur_radius) + 1
+    gray = cv2.GaussianBlur(gray, (ksize, ksize), 0)
   laplacian = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
   laplacian = z_score_normalization(laplacian)
   sobel_x = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
@@ -1672,6 +1673,11 @@ def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+
+  sharpness = compute_sharpness(expanded)
+  sharpness = percentile_normalization(sharpness, 2, 98)
+  edge_mask = (sharpness > 0.85).astype(np.float32)
+
   pyramid = make_gaussian_pyramid(expanded, levels)
   diffused = pyramid[-1]
   bokehs = [2 ** i for i in range(levels - 1, -1, -1)]
@@ -1691,8 +1697,19 @@ def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   return np.clip(trimmed, 0, 1)
 
 
-def blur_image_portrait(image, levels, decay=0):
-  """Applies portrait blur."""
+
+def blur_image_portrait_stack(image, levels, decay=0.0, contrast=1.0):
+  images = []
+  for i in range(levels):
+    images.append(blur_image_portrait(image, i + 1, decay, contrast))
+
+  return merge_images_geometric_mean(images)
+  return np.mean(images, axis=0)
+
+
+
+def blur_image_portrait(image, levels, decay=0.0, contrast=1.0):
+  """Applies edge-aware pyramid blur that avoids edge bleeding and softly restores edges using Laplacian pyramid."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
   levels = min(levels, int(math.log2(min(h, w))) - 1)
@@ -1700,23 +1717,74 @@ def blur_image_portrait(image, levels, decay=0):
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  pyramid = make_gaussian_pyramid(expanded, levels)
-  diffused = pyramid[-1]
-  bokehs = [2 ** i for i in range(levels - 1, -1, -1)]
-  sum_bokehs = sum(bokehs)
-  raw_alphas = [b / sum_bokehs for b in bokehs]
-  for i in range(levels - 1, -1, -1):
-    size = (pyramid[i].shape[1], pyramid[i].shape[0])
-    diffused = cv2.pyrUp(diffused, dstsize=size)
-    alpha = raw_alphas[i] * decay + (1 - decay)
-    rev_alpha = raw_alphas[levels - i - 1]
-    std_ref = pyramid[i].std()
+
+  # Gaussian pyramid
+  gauss_pyr = make_gaussian_pyramid(expanded, levels)
+
+  # Laplacian pyramid
+  lap_pyr = []
+  for i in range(levels):
+    upsampled = cv2.pyrUp(gauss_pyr[i + 1], dstsize=(gauss_pyr[i].shape[1], gauss_pyr[i].shape[0]))
+    lap = gauss_pyr[i] - upsampled
+    lap_pyr.append(lap)
+  lap_pyr.append(gauss_pyr[-1])
+
+  # Full-resolution sharpness and edge mask
+  sharp_full = compute_sharpness(expanded)
+  sharp_full = percentile_normalization(sharp_full, 2, 98)
+  edge0 = (sharp_full > 0.85).astype(np.float32)
+
+  # Edge mask pyramid (strong edges only)
+  edge_pyr = [edge0]
+  for lvl in range(levels):
+    sharp_lvl = compute_sharpness(gauss_pyr[lvl + 1])
+    sharp_lvl = percentile_normalization(sharp_lvl, 2, 98)
+    edge_lvl = (sharp_lvl > 0.85).astype(np.float32)
+    prev = cv2.pyrDown(edge_pyr[-1], dstsize=(edge_lvl.shape[1], edge_lvl.shape[0]))
+    edge_comb = np.clip(prev + edge_lvl, 0, 1)
+    edge_pyr.append(edge_comb)
+
+  # Edge-aware upsampling with Laplacian fallback
+  def edge_aware_pyrup(img_low, edge_mask, size, fallback):
+    mask_inv = 1.0 - edge_mask
+    mask_inv_3d = mask_inv[:, :, None]
+    numerator = cv2.pyrUp(img_low * mask_inv_3d, dstsize=size)
+    denominator = cv2.pyrUp(mask_inv, dstsize=size)
+    denom_safe = np.clip(denominator, 1e-6, None)
+    averaged = numerator / denom_safe[:, :, None]
+    fallback_up = cv2.pyrUp(fallback, dstsize=size)
+    blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
+    return (1 - blend_weight) * averaged + blend_weight * fallback_up
+
+  # Reconstruction with contrast restoration
+  diffused = gauss_pyr[-1]
+  fallback = lap_pyr[-1]
+  bokeh_weights = [2 ** i for i in range(levels - 1, -1, -1)]
+  total_weight = sum(bokeh_weights)
+  alpha_weights = [w / total_weight for w in bokeh_weights]
+
+  for lvl in range(levels - 1, -1, -1):
+    size = (gauss_pyr[lvl].shape[1], gauss_pyr[lvl].shape[0])
+    diffused = edge_aware_pyrup(diffused, edge_pyr[lvl + 1], size, fallback)
+    fallback = gauss_pyr[lvl]
+    alpha = alpha_weights[lvl] * decay + (1 - decay)
+
+    std_ref = gauss_pyr[lvl].std()
     std_diff = diffused.std()
-    gain = std_ref / (std_diff + 1e-6)
+    gain = std_ref / (std_diff + 1e-6) * contrast
     gain = np.clip(gain, 1.0, 2.0)
-    diffused = alpha * diffused * gain + (1 - alpha) * pyramid[i]
-  trimmed = diffused[:h, :w]
-  return np.clip(trimmed, 0, 1)
+    diffused = alpha * diffused * gain + (1 - alpha) * gauss_pyr[lvl]
+
+  result = diffused[:h, :w]
+
+  # Final edge restoration via sigmoid blending
+  sharp_final = compute_sharpness(image, base_area=sys.maxsize, blur_radius=0)
+  sharp_final = percentile_normalization(sharp_final, 2, 98)
+  edge_blend_mask = sigmoidal_contrast_image(sharp_final, gain=10, mid=0.9)
+  edge_blend_mask = np.repeat(edge_blend_mask[:, :, np.newaxis], 3, axis=2)
+  final = edge_blend_mask * image + (1 - edge_blend_mask) * result
+
+  return np.clip(final, 0, 1)
 
 
 def unsharp_image_gaussian(image, radius):
