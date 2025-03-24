@@ -2199,6 +2199,8 @@ def main():
   images_data = load_input_images(args)
   images, bits_list = zip(*images_data)
   meta_list = [get_metadata(input_path) for input_path in args.inputs]
+  if logger.isEnabledFor(logging.DEBUG):
+    log_image_stats(images[0][0], "first")
   brightness_values = np.array([compute_brightness(image) for image in images])
   mean_brightness = np.mean(brightness_values)
   logger.debug(f"mean_brightness={mean_brightness:.3f}")
@@ -2347,8 +2349,10 @@ def log_image_stats(image, prefix):
   max = np.max(image)
   mean = np.mean(image)
   stddev = np.std(image)
-  logger.debug(f"{prefix} stats: min={min:.3f}, max={max:.3f},"
-               f" mean={mean:.3f}, stddev={stddev:.3f}, nan={has_nan}")
+  skew = np.mean((image - np.mean(image))**3) / (np.std(image)**3)
+  kurt = np.mean((image - np.mean(image))**4) / np.std(image)**4 - 3
+  logger.debug(f"{prefix} stats: min={min:.3f}, max={max:.3f}, mean={mean:.3f},"
+               f" stddev={stddev:.3f}, skew={skew:.3f}, kurt={kurt:.3f}, nan={has_nan}")
 
 
 def edit_image(image, args):
@@ -2442,22 +2446,28 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   assert all(image.dtype == np.float32 for image in images)
   merge_params = parse_name_opts_expression(args.merge)
   merge_name = merge_params["name"]
+  be_adjusted = False
   is_hdr = False
   if merge_name in ["average", "a", "mean"]:
     logger.info(f"Merging images by average composition")
     merged_image = merge_images_average(images)
+    be_adjusted = len(images) > 1
   elif merge_name in ["median", "mdn"]:
     logger.info(f"Merging images by median composition")
     merged_image = merge_images_median(images)
+    be_adjusted = len(images) > 1
   elif merge_name in ["geomean", "gm"]:
     logger.info(f"Merging images by geometric mean composition")
     merged_image = merge_images_geometric_mean(images)
+    be_adjusted = len(images) > 1
   elif merge_name in ["minimum", "min"]:
     logger.info(f"Merging images by minimum composition")
     merged_image = merge_images_minimum(images)
+    be_adjusted = len(images) > 1
   elif merge_name in ["maximum", "max"]:
     logger.info(f"Merging images by maximum composition")
     merged_image = merge_images_maximum(images)
+    be_adjusted = len(images) > 1
   elif merge_name in ["denoise", "dn", "bgmbm"]:
     logger.info(f"Merging images by denoise composition")
     kwargs = {}
@@ -2466,20 +2476,25 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     if "blur_radius" in merge_params:
       kwargs["blur_radius"] = int(merge_params["blur_radius"])
     merged_image = merge_images_denoise(images, **kwargs)
+    be_adjusted = True
   elif merge_name in ["weighted", "w"]:
     logger.info(f"Merging images by weighted average composition")
     merged_image = merge_images_weighted_average(images, meta_list)
+    be_adjusted = len(images) > 1
   elif merge_name in ["debevec", "d"]:
     logger.info(f"Merging images by Debevec's method as an HDRI")
     merged_image = merge_images_debevec(images, meta_list)
+    be_adjusted = True
     is_hdr = True
   elif merge_name in ["robertson", "r"]:
     logger.info(f"Merging images by Robertson's method")
     merged_image = merge_images_robertson(images, meta_list)
+    be_adjusted = True
     is_hdr = True
   elif merge_name in ["mertens", "m"]:
     logger.info(f"Merging images by Mertens's method")
     merged_image = merge_images_mertens(images)
+    be_adjusted = True
     is_hdr = True
   elif merge_name in ["focus", "f"]:
     logger.info(f"Merging images by focus stacking")
@@ -2489,6 +2504,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     if "pyramid_levels" in merge_params:
       kwargs["pyramid_levels"] = int(merge_params["pyramid_levels"])
     merged_image = merge_images_focus_stacking(images, **kwargs)
+    be_adjusted = len(images) > 1
   elif merge_name in ["grid", "g"]:
     logger.info(f"Merging images in a grid")
     kwargs = {}
@@ -2527,7 +2543,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     if logger.isEnabledFor(logging.DEBUG):
       log_image_stats(merged_image, "tonemapped")
     merged_image = fix_overflown_image(merged_image)
-  if not args.no_restore:
+  if be_adjusted and not args.no_restore:
     logger.info(f"Applying auto restoration of brightness")
     merged_image = adjust_exposure_image(merged_image, mean_brightness)
   merged_image = edit_image(merged_image, args)

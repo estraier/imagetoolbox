@@ -62,7 +62,7 @@ Alignment is also useful for creating HDR images of handheld pictures.
   $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a o
 
 By default, brightness of the merged image is calibrated to match the average brightness of the
-input images.  If you calibrate brightness yourself, suppress it.
+input images.  If you calibrate brightness yourself, suppress the auto adjustment.
 
   $ itb_stack.py input*.jpg -o output.jpg -nr
 
