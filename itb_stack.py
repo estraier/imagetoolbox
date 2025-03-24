@@ -1673,11 +1673,11 @@ def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  pyramid = make_gaussian_pyramid(expanded, levels)
-  diffused = pyramid[-1]
   bokehs = [2 ** i for i in range(levels - 1, -1, -1)]
   sum_bokehs = sum(bokehs)
   raw_alphas = [b / sum_bokehs for b in bokehs]
+  pyramid = make_gaussian_pyramid(expanded, levels)
+  diffused = pyramid[-1]
   for i in range(levels - 1, -1, -1):
     size = (pyramid[i].shape[1], pyramid[i].shape[0])
     diffused = cv2.pyrUp(diffused, dstsize=size)
@@ -1698,7 +1698,6 @@ def blur_image_portrait_stack(image, levels, decay=0.0, contrast=1.0):
   for i in range(levels):
     images.append(blur_image_portrait_naive(image, i + 1, decay, contrast))
   return merge_images_geometric_mean(images)
-  return np.mean(images, axis=0)
 
 
 def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.85):
