@@ -1701,6 +1701,7 @@ def blur_image_portrait_stack(image, levels, decay=0.0, contrast=1.0):
   return np.mean(images, axis=0)
 
 
+
 def blur_image_portrait(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.85):
   """Applies edge-aware pyramid blur that avoids edge bleeding and softly restores edges using Laplacian pyramid."""
   assert image.dtype == np.float32
@@ -1710,6 +1711,15 @@ def blur_image_portrait(image, levels, decay=0.0, contrast=1.0, edge_threshold=0
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+
+  def hard_pool_half(mask):
+    """Downsamples a mask by 2 using a 2x2 window. Outputs 1 if at least 2 of 4 are edge."""
+    h, w = mask.shape
+    h2, w2 = h // 2, w // 2
+    mask = mask[:h2*2, :w2*2]
+    reshaped = mask.reshape(h2, 2, w2, 2)
+    pooled = np.sum(reshaped, axis=(1, 3))
+    return (pooled >= 2).astype(np.float32)
 
   # Gaussian pyramid
   gauss_pyr = make_gaussian_pyramid(expanded, levels)
@@ -1733,8 +1743,8 @@ def blur_image_portrait(image, levels, decay=0.0, contrast=1.0, edge_threshold=0
     sharp_lvl = compute_sharpness(gauss_pyr[lvl + 1])
     sharp_lvl = percentile_normalization(sharp_lvl, 2, 98)
     edge_lvl = (sharp_lvl > edge_threshold).astype(np.float32)
-    prev = cv2.pyrDown(edge_pyr[-1], dstsize=(edge_lvl.shape[1], edge_lvl.shape[0]))
-    edge_comb = np.clip(prev + edge_lvl, 0, 1)
+    wall_lvl = hard_pool_half(edge_pyr[-1])
+    edge_comb = np.maximum(wall_lvl, edge_lvl)
     edge_pyr.append(edge_comb)
 
   # Edge-aware upsampling with Laplacian fallback
