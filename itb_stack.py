@@ -1699,7 +1699,7 @@ def compute_levels_blur_image_portrait(image):
   return max(int(math.log2(area_root)) - 5, 2)
 
 
-def blur_image_portrait_stack(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=0.85,
+def blur_image_portrait_stack(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=0.8,
                               bokeh_balance=0.75):
   """Applies portrait blur by stacked ECPB in an old way."""
   results = []
@@ -1723,7 +1723,7 @@ def blur_image_portrait_stack(image, max_levels, decay=0.0, contrast=1.0, edge_t
   return geo_mean;
 
 
-def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.85):
+def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.8):
   """Applies portrait blur by naive ECPB."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
