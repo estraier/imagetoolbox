@@ -1699,12 +1699,29 @@ def compute_levels_blur_image_portrait(image):
   return max(int(math.log2(area_root)) - 5, 2)
 
 
-def blur_image_portrait_stack(image, levels, decay=0.0, contrast=1.0):
+def blur_image_portrait_stack(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=0.85,
+                              bokeh_balance=0.75):
   """Applies portrait blur by stacked ECPB in an old way."""
-  images = []
-  for i in range(levels):
-    images.append(blur_image_portrait_naive(image, i + 1, decay, contrast))
-  return merge_images_geometric_mean(images)
+  results = []
+  for i in range(max_levels):
+    results.append(blur_image_portrait_naive(image, i + 1, decay, contrast, edge_threshold))
+  def compute_geometric_weights():
+    scores = []
+    for level in range(1, max_levels + 1):
+      bokeh_benefit = math.log2(level + 1)
+      artifact_cost = math.sqrt(level)
+      score = bokeh_balance * bokeh_benefit - (1 - bokeh_balance) * artifact_cost
+      scores.append(score)
+    scores = np.array(scores)
+    weights = np.exp(scores - np.max(scores))
+    return weights / np.sum(weights)
+  weights = compute_geometric_weights()
+  print(weights)
+  log_sum = np.zeros_like(results[0])
+  for r, w in zip(results, weights):
+    log_sum += w * np.log(np.clip(r, 1e-6, 1.0))
+  geo_mean = np.exp(log_sum)
+  return geo_mean;
 
 
 def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.85):
@@ -1716,13 +1733,6 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  gauss_pyr = make_gaussian_pyramid(expanded, levels)
-  lap_pyr = []
-  for i in range(levels):
-    upsampled = cv2.pyrUp(gauss_pyr[i + 1], dstsize=(gauss_pyr[i].shape[1], gauss_pyr[i].shape[0]))
-    lap = gauss_pyr[i] - upsampled
-    lap_pyr.append(lap)
-  lap_pyr.append(gauss_pyr[-1])
   sharp_full = compute_sharpness(expanded)
   sharp_full = percentile_normalization(sharp_full, 2, 98)
   edge_full = (sharp_full > edge_threshold).astype(np.float32)
@@ -1733,6 +1743,37 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
     reshaped = mask.reshape(h2, 2, w2, 2)
     pooled = np.sum(reshaped, axis=(1, 3))
     return (pooled >= 2).astype(np.float32)
+  def edge_aware_pyrdown(img, edge_mask):
+    mask_inv = 1.0 - edge_mask
+    mask_inv_3d = mask_inv[:, :, None]
+    numerator = cv2.pyrDown(img * mask_inv_3d)
+    denominator = cv2.pyrDown(mask_inv)
+    denom_safe = np.clip(denominator, 1e-6, None)
+    return numerator / denom_safe[:, :, None]
+  def edge_aware_pyrup(img_low, edge_mask, size, fallback):
+    mask_inv = 1.0 - edge_mask
+    mask_inv_3d = mask_inv[:, :, None]
+    numerator = cv2.pyrUp(img_low * mask_inv_3d, dstsize=size)
+    denominator = cv2.pyrUp(mask_inv, dstsize=size)
+    denom_safe = np.clip(denominator, 1e-6, None)
+    averaged = numerator / denom_safe[:, :, None]
+    blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
+    return (1 - blend_weight) * averaged + blend_weight * fallback
+  gauss_pyr = [expanded]
+  for _ in range(levels):
+    gauss_pyr.append(cv2.pyrDown(gauss_pyr[-1]))
+  lap_pyr = []
+  for i in range(levels):
+    up = cv2.pyrUp(gauss_pyr[i + 1], dstsize=(gauss_pyr[i].shape[1], gauss_pyr[i].shape[0]))
+    lap = gauss_pyr[i] - up
+    lap_pyr.append(lap)
+  lap_pyr.append(gauss_pyr[-1])
+  restored = lap_pyr[-1]
+  restored_list = [restored]
+  for i in range(levels - 1, -1, -1):
+    size = (lap_pyr[i].shape[1], lap_pyr[i].shape[0])
+    restored = cv2.pyrUp(restored, dstsize=size) + lap_pyr[i]
+    restored_list.insert(0, restored)
   edge_pyr = [edge_full]
   for lvl in range(levels):
     sharp_lvl = compute_sharpness(gauss_pyr[lvl + 1])
@@ -1741,35 +1782,24 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
     wall_lvl = hard_pool_half(edge_pyr[-1])
     edge_comb = np.maximum(wall_lvl, edge_lvl)
     edge_pyr.append(edge_comb)
-  diffused = gauss_pyr[-1]
-  fallback = lap_pyr[-1]
+  edged_gauss_pyr = [expanded]
+  for lvl in range(levels):
+    down = edge_aware_pyrdown(edged_gauss_pyr[-1], edge_pyr[lvl])
+    edged_gauss_pyr.append(down)
   bokeh_weights = [2 ** i for i in range(levels - 1, -1, -1)]
   total_weight = sum(bokeh_weights)
   alpha_weights = [w / total_weight for w in bokeh_weights]
-  def edge_aware_pyrup(img_low, edge_mask, size, fallback):
-    skewness = np.mean((edge_mask - np.mean(edge_mask))**3) / (np.std(edge_mask)**3)
-    kurtosis = np.mean((edge_mask - np.mean(edge_mask))**4) / np.std(edge_mask)**4 - 3
-    print(f"mean={np.mean(edge_mask):.2f}, std={np.std(edge_mask):.2f},"
-          f" skew={skewness:.2f}, kurt={kurtosis:.2f}")
-    mask_inv = 1.0 - edge_mask
-    mask_inv_3d = mask_inv[:, :, None]
-    numerator = cv2.pyrUp(img_low * mask_inv_3d, dstsize=size)
-    denominator = cv2.pyrUp(mask_inv, dstsize=size)
-    denom_safe = np.clip(denominator, 1e-6, None)
-    averaged = numerator / denom_safe[:, :, None]
-    fallback_up = cv2.pyrUp(fallback, dstsize=size)
-    blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
-    return (1 - blend_weight) * averaged + blend_weight * fallback_up
+  diffused = edged_gauss_pyr[-1]
   for lvl in range(levels - 1, -1, -1):
     size = (gauss_pyr[lvl].shape[1], gauss_pyr[lvl].shape[0])
+    fallback = restored_list[lvl]
     diffused = edge_aware_pyrup(diffused, edge_pyr[lvl + 1], size, fallback)
-    fallback = gauss_pyr[lvl]
     alpha = alpha_weights[lvl] * decay + (1 - decay)
-    std_ref = gauss_pyr[lvl].std()
+    std_ref = edged_gauss_pyr[lvl].std()
     std_diff = diffused.std()
     gain = std_ref / (std_diff + 1e-6) * contrast
     gain = np.clip(gain, 1.0, 2.0)
-    diffused = alpha * diffused * gain + (1 - alpha) * gauss_pyr[lvl]
+    diffused = alpha * diffused * gain + (1 - alpha) * edged_gauss_pyr[lvl]
   result = diffused[:h, :w]
   sharp_final = compute_sharpness(image, base_area=sys.maxsize, blur_radius=0)
   sharp_final = percentile_normalization(sharp_final, 2, 98)
@@ -1789,13 +1819,18 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  gauss_pyr_full = make_gaussian_pyramid(expanded, max_levels)
-  sizes_full = [(g.shape[1], g.shape[0]) for g in gauss_pyr_full]
+  gauss_pyr_full = [expanded]
+  for _ in range(max_levels):
+    gauss_pyr_full.append(cv2.pyrDown(gauss_pyr_full[-1]))
   lap_pyr_full = []
+  sizes_full = []
   for i in range(max_levels):
-    up = cv2.pyrUp(gauss_pyr_full[i + 1], dstsize=sizes_full[i])
+    up = cv2.pyrUp(gauss_pyr_full[i + 1],
+                   dstsize=(gauss_pyr_full[i].shape[1], gauss_pyr_full[i].shape[0]))
     lap = gauss_pyr_full[i] - up
     lap_pyr_full.append(lap)
+    sizes_full.append((gauss_pyr_full[i].shape[1], gauss_pyr_full[i].shape[0]))
+  sizes_full.append((gauss_pyr_full[-1].shape[1], gauss_pyr_full[-1].shape[0]))
   sharp_full = compute_sharpness(expanded)
   sharp_full = percentile_normalization(sharp_full, 2, 98)
   edge_full = (sharp_full > edge_threshold).astype(np.float32)
@@ -1803,46 +1838,62 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
     percentile_normalization(compute_sharpness(gauss_pyr_full[i + 1]), 2, 98)
     for i in range(max_levels)
   ]
-  alpha_weights_list = []
-  for levels in range(1, max_levels + 1):
-    bokehs = [2 ** i for i in range(levels - 1, -1, -1)]
-    total = sum(bokehs)
-    alpha_weights = [b / total for b in bokehs]
-    alpha_weights_list.append(alpha_weights)
-  def edge_aware_pyrup(img_low, edge_mask, size, fallback):
-    mask_inv = 1.0 - edge_mask
-    mask_inv_3d = mask_inv[:, :, None]
-    numerator = cv2.pyrUp(img_low * mask_inv_3d, dstsize=size)
-    denominator = cv2.pyrUp(mask_inv, dstsize=size)
-    denom_safe = np.clip(denominator, 1e-6, None)
-    averaged = numerator / denom_safe[:, :, None]
-    fallback_up = cv2.pyrUp(fallback, dstsize=size)
-    blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
-    return (1 - blend_weight) * averaged + blend_weight * fallback_up
   results = []
   for levels in range(1, max_levels + 1):
     gauss_pyr = gauss_pyr_full[:levels + 1]
-    lap_pyr = lap_pyr_full[:levels] + [gauss_pyr[-1]]
+    lap_pyr = lap_pyr_full[:levels] + [gauss_pyr_full[levels]]
     sizes = sizes_full[:levels + 1]
     sharp_pyr = sharpness_pyr_full[:levels]
+    restored = lap_pyr[-1]
+    restored_list = [restored]
+    for i in range(levels - 1, -1, -1):
+      size = sizes[i]
+      restored = cv2.pyrUp(restored, dstsize=size) + lap_pyr[i]
+      restored_list.insert(0, restored)
+    def hard_pool_half(mask):
+      h2, w2 = mask.shape[0] // 2, mask.shape[1] // 2
+      pooled = mask[:h2*2, :w2*2].reshape(h2, 2, w2, 2).sum(axis=(1, 3))
+      return (pooled >= 2).astype(np.float32)
     edge_pyr = [edge_full]
     for lvl in range(levels):
       edge_lvl = (sharp_pyr[lvl] > edge_threshold).astype(np.float32)
-      wall_lvl = cv2.pyrDown(edge_pyr[-1], dstsize=(edge_lvl.shape[1], edge_lvl.shape[0]))
-      edge_comb = np.clip(wall_lvl + edge_lvl, 0, 1)
+      wall_lvl = hard_pool_half(edge_pyr[-1])
+      edge_comb = np.maximum(wall_lvl, edge_lvl)
       edge_pyr.append(edge_comb)
-    diffused = gauss_pyr[-1]
-    fallback = lap_pyr[-1]
-    alpha_weights = alpha_weights_list[levels - 1]
+    def edge_aware_pyrdown(img, edge_mask):
+      mask_inv = 1.0 - edge_mask
+      mask_inv_3d = mask_inv[:, :, None]
+      numerator = cv2.pyrDown(img * mask_inv_3d)
+      denominator = cv2.pyrDown(mask_inv)
+      denom_safe = np.clip(denominator, 1e-6, None)
+      return numerator / denom_safe[:, :, None]
+    edged_gauss_pyr = [expanded]
+    for lvl in range(levels):
+      down = edge_aware_pyrdown(edged_gauss_pyr[-1], edge_pyr[lvl])
+      edged_gauss_pyr.append(down)
+    def edge_aware_pyrup(img_low, edge_mask, size, fallback):
+      mask_inv = 1.0 - edge_mask
+      mask_inv_3d = mask_inv[:, :, None]
+      numerator = cv2.pyrUp(img_low * mask_inv_3d, dstsize=size)
+      denominator = cv2.pyrUp(mask_inv, dstsize=size)
+      denom_safe = np.clip(denominator, 1e-6, None)
+      averaged = numerator / denom_safe[:, :, None]
+      blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
+      return (1 - blend_weight) * averaged + blend_weight * fallback
+    bokeh_weights = [2 ** i for i in range(levels - 1, -1, -1)]
+    total_weight = sum(bokeh_weights)
+    alpha_weights = [w / total_weight for w in bokeh_weights]
+    diffused = edged_gauss_pyr[-1]
     for lvl in range(levels - 1, -1, -1):
-      diffused = edge_aware_pyrup(diffused, edge_pyr[lvl + 1], sizes[lvl], fallback)
-      fallback = gauss_pyr[lvl]
+      size = sizes[lvl]
+      fallback = restored_list[lvl]
+      diffused = edge_aware_pyrup(diffused, edge_pyr[lvl + 1], size, fallback)
       alpha = alpha_weights[lvl] * decay + (1 - decay)
-      std_ref = gauss_pyr[lvl].std()
+      std_ref = edged_gauss_pyr[lvl].std()
       std_diff = diffused.std()
       gain = std_ref / (std_diff + 1e-6) * contrast
       gain = np.clip(gain, 1.0, 2.0)
-      diffused = alpha * diffused * gain + (1 - alpha) * gauss_pyr[lvl]
+      diffused = alpha * diffused * gain + (1 - alpha) * edged_gauss_pyr[lvl]
     results.append(diffused[:h, :w])
   def compute_geometric_weights():
     scores = []
@@ -2448,11 +2499,7 @@ def edit_image(image, args):
     if "bokeh_balance" in portrait_params:
       kwargs["bokeh_balance"] = int(portrait_params["bokeh_balance"])
     logger.info(f"Applying portrait blur by {portrait_levels} levels")
-    #image = blur_image_portrait(image, portrait_levels, **kwargs)
-
-    image = blur_image_portrait_naive(image, portrait_levels, **kwargs)
-
-
+    image = blur_image_portrait(image, portrait_levels, **kwargs)
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
     image = unsharp_image_gaussian(image, args.unsharp)
