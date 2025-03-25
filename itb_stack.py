@@ -1716,7 +1716,6 @@ def blur_image_portrait_stack(image, max_levels, decay=0.0, contrast=1.0, edge_t
     weights = np.exp(scores - np.max(scores))
     return weights / np.sum(weights)
   weights = compute_geometric_weights()
-  print(weights)
   log_sum = np.zeros_like(results[0])
   for r, w in zip(results, weights):
     log_sum += w * np.log(np.clip(r, 1e-6, 1.0))
@@ -1809,7 +1808,7 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
   return np.clip(final, 0, 1)
 
 
-def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=0.85,
+def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=None,
                         bokeh_balance=0.75):
   """Applies portrait blur by stacked ECPB."""
   assert image.dtype == np.float32
@@ -1819,6 +1818,12 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
+  def compute_edge_thresholds(min_thresh=0.65, max_thresh=0.9):
+    return np.linspace(min_thresh, max_thresh, max_levels + 1).tolist()
+  if edge_threshold:
+    edge_thresholds = [edge_threshold] * (max_levels + 1)
+  else:
+    edge_thresholds = compute_edge_thresholds()
   gauss_pyr_full = [expanded]
   for _ in range(max_levels):
     gauss_pyr_full.append(cv2.pyrDown(gauss_pyr_full[-1]))
@@ -1833,7 +1838,7 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
   sizes_full.append((gauss_pyr_full[-1].shape[1], gauss_pyr_full[-1].shape[0]))
   sharp_full = compute_sharpness(expanded)
   sharp_full = percentile_normalization(sharp_full, 2, 98)
-  edge_full = (sharp_full > edge_threshold).astype(np.float32)
+  edge_full = (sharp_full > edge_thresholds[0]).astype(np.float32)
   sharpness_pyr_full = [
     percentile_normalization(compute_sharpness(gauss_pyr_full[i + 1]), 2, 98)
     for i in range(max_levels)
@@ -1856,7 +1861,7 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
       return (pooled >= 2).astype(np.float32)
     edge_pyr = [edge_full]
     for lvl in range(levels):
-      edge_lvl = (sharp_pyr[lvl] > edge_threshold).astype(np.float32)
+      edge_lvl = (sharp_pyr[lvl] > edge_thresholds[levels]).astype(np.float32)
       wall_lvl = hard_pool_half(edge_pyr[-1])
       edge_comb = np.maximum(wall_lvl, edge_lvl)
       edge_pyr.append(edge_comb)
@@ -2495,9 +2500,9 @@ def edit_image(image, args):
     if "contrast" in portrait_params:
       kwargs["contrast"] = float(portrait_params["contrast"])
     if "edge_threshold" in portrait_params:
-      kwargs["edge_threshold"] = int(portrait_params["edge_threshold"])
+      kwargs["edge_threshold"] = float(portrait_params["edge_threshold"])
     if "bokeh_balance" in portrait_params:
-      kwargs["bokeh_balance"] = int(portrait_params["bokeh_balance"])
+      kwargs["bokeh_balance"] = float(portrait_params["bokeh_balance"])
     logger.info(f"Applying portrait blur by {portrait_levels} levels")
     image = blur_image_portrait(image, portrait_levels, **kwargs)
   if args.unsharp > 0:
