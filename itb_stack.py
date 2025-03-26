@@ -1664,6 +1664,74 @@ def blur_image_gaussian(image, radius):
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
 
 
+
+def circular_blur_kernel(radius):
+  """Creates a normalized circular (disc-shaped) kernel."""
+  size = radius * 2 + 1
+  y, x = np.ogrid[-radius:radius+1, -radius:radius+1]
+  mask = x**2 + y**2 <= radius**2
+  kernel = np.zeros((size, size), dtype=np.float32)
+  kernel[mask] = 1
+  kernel /= np.sum(kernel)
+  return kernel
+
+def ring_blur_kernel(radius_outer, radius_inner=0):
+  size = radius_outer * 2 + 1
+  center = radius_outer
+  Y, X = np.ogrid[:size, :size]
+  dist = np.sqrt((X - center) ** 2 + (Y - center) ** 2)
+  kernel = np.where((dist >= radius_inner) & (dist <= radius_outer), 1.0, 0.0)
+  kernel /= np.sum(kernel)
+  return kernel.astype(np.float32)
+
+
+def circular_blur(image, radius=5):
+  """
+  Applies a circular disc-shaped blur, similar to optical bokeh.
+  radius: radius of the circular kernel, controls strength.
+  """
+  kernel = circular_blur_kernel(radius)
+  #kernel = ring_blur_kernel(radius)
+  blurred = cv2.filter2D(image, -1, kernel, borderType=cv2.BORDER_REFLECT)
+  return blurred
+
+
+def resize_down(image):
+  down = cv2.resize(image, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
+  tx, ty = 0.25, 0.25
+  M = np.float32([[1, 0, tx], [0, 1, ty]])
+  shifted = cv2.warpAffine(down, M, (down.shape[1], down.shape[0]),
+                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+  #blurred = cv2.GaussianBlur(shifted, (3, 3), sigmaX=0.4, sigmaY=0.4)
+  blurred = circular_blur(shifted, 3)
+  return blurred
+
+
+def resize_up(image):
+  up = cv2.resize(image, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_LINEAR)
+  shift_matrix = np.float32([[1, 0, -0.5], [0, 1, -0.5]])
+  shifted = cv2.warpAffine(up, shift_matrix,
+                           (up.shape[1], up.shape[0]),
+                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+  #blurred = cv2.GaussianBlur(shifted, (3, 3), sigmaX=0.4, sigmaY=0.4)
+  blurred = circular_blur(shifted, 3)
+  return blurred
+
+
+def make_gaussian_pyramid_resize(image, levels):
+  assert image.dtype == np.float32
+  pyramid = [image]
+  for _ in range(levels):
+    image = resize_down(image)
+    pyramid.append(image)
+  return pyramid
+
+
+  #pyramid = make_gaussian_pyramid_resize(expanded, levels)
+  #diffused = resize_up(diffused)
+
+
+
 def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   """Applies pyramid blur."""
   assert image.dtype == np.float32
@@ -1673,17 +1741,15 @@ def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  bokehs = [2 ** i for i in range(levels - 1, -1, -1)]
-  sum_bokehs = sum(bokehs)
-  raw_alphas = [b / sum_bokehs for b in bokehs]
+  bokehs = [2 ** i for i in range(0, levels)]
+  alpha_weights = [b / bokehs[-1] for b in reversed(bokehs)]
   pyramid = make_gaussian_pyramid(expanded, levels)
   diffused = pyramid[-1]
   for i in range(levels - 1, -1, -1):
     size = (pyramid[i].shape[1], pyramid[i].shape[0])
     diffused = cv2.pyrUp(diffused, dstsize=size)
     gamma_decay = decay ** 2
-    alpha = raw_alphas[i] * gamma_decay + (1 - gamma_decay)
-    rev_alpha = raw_alphas[levels - i - 1]
+    alpha = alpha_weights[i] * gamma_decay + (1 - gamma_decay)
     std_ref = pyramid[i].std()
     std_diff = diffused.std()
     gain = std_ref / (std_diff + 1e-6) * contrast
@@ -1786,9 +1852,8 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
   for lvl in range(levels):
     down = edge_aware_pyrdown(edged_gauss_pyr[-1], edge_pyr[lvl])
     edged_gauss_pyr.append(down)
-  bokeh_weights = [2 ** i for i in range(levels - 1, -1, -1)]
-  total_weight = sum(bokeh_weights)
-  alpha_weights = [w / total_weight for w in bokeh_weights]
+  bokehs = [2 ** i for i in range(0, levels)]
+  alpha_weights = [b / bokehs[-1] for b in reversed(bokehs)]
   diffused = edged_gauss_pyr[-1]
   for lvl in range(levels - 1, -1, -1):
     size = (gauss_pyr[lvl].shape[1], gauss_pyr[lvl].shape[0])
@@ -1820,7 +1885,7 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  def compute_edge_thresholds(min_thresh=0.65, max_thresh=0.9):
+  def compute_edge_thresholds(min_thresh=0.6, max_thresh=0.8):
     return np.linspace(min_thresh, max_thresh, max_levels + 1).tolist()
   if edge_threshold:
     edge_thresholds = [edge_threshold] * (max_levels + 1)
@@ -1887,9 +1952,8 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
       averaged = numerator / denom_safe[:, :, None]
       blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
       return (1 - blend_weight) * averaged + blend_weight * fallback
-    bokeh_weights = [2 ** i for i in range(levels - 1, -1, -1)]
-    total_weight = sum(bokeh_weights)
-    alpha_weights = [w / total_weight for w in bokeh_weights]
+    bokehs = [2 ** i for i in range(0, levels)]
+    alpha_weights = [b / bokehs[-1] for b in reversed(bokehs)]
     diffused = edged_gauss_pyr[-1]
     for lvl in range(levels - 1, -1, -1):
       size = sizes[lvl]
