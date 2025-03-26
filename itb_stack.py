@@ -1681,7 +1681,8 @@ def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   for i in range(levels - 1, -1, -1):
     size = (pyramid[i].shape[1], pyramid[i].shape[0])
     diffused = cv2.pyrUp(diffused, dstsize=size)
-    alpha = raw_alphas[i] * decay + (1 - decay)
+    gamma_decay = decay ** 2
+    alpha = raw_alphas[i] * gamma_decay + (1 - gamma_decay)
     rev_alpha = raw_alphas[levels - i - 1]
     std_ref = pyramid[i].std()
     std_diff = diffused.std()
@@ -1793,7 +1794,8 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
     size = (gauss_pyr[lvl].shape[1], gauss_pyr[lvl].shape[0])
     fallback = restored_list[lvl]
     diffused = edge_aware_pyrup(diffused, edge_pyr[lvl + 1], size, fallback)
-    alpha = alpha_weights[lvl] * decay + (1 - decay)
+    gamma_decay = decay ** 2
+    alpha = alpha_weights[lvl] * gamma_decay + (1 - gamma_decay)
     std_ref = edged_gauss_pyr[lvl].std()
     std_diff = diffused.std()
     gain = std_ref / (std_diff + 1e-6) * contrast
@@ -1893,7 +1895,8 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
       size = sizes[lvl]
       fallback = restored_list[lvl]
       diffused = edge_aware_pyrup(diffused, edge_pyr[lvl + 1], size, fallback)
-      alpha = alpha_weights[lvl] * decay + (1 - decay)
+      gamma_decay = decay ** 2
+      alpha = alpha_weights[lvl] * gamma_decay + (1 - gamma_decay)
       std_ref = edged_gauss_pyr[lvl].std()
       std_diff = diffused.std()
       gain = std_ref / (std_diff + 1e-6) * contrast
@@ -2489,11 +2492,10 @@ def edit_image(image, args):
     image = blur_image_pyramid(image, int(blur_num) * -1, **kwargs)
   portrait_params = parse_name_opts_expression(args.portrait)
   portrait_name = portrait_params["name"]
-  if portrait_name and portrait_name != "none":
-    if portrait_name == "auto":
-      portrait_levels = compute_levels_blur_image_portrait(image)
-    else:
-      portrait_levels = int(portrait_name)
+  if portrait_name == "auto":
+    portrait_name = str(compute_levels_blur_image_portrait(image))
+  portrait_levels = int(portrait_name)
+  if portrait_levels > 0:
     kwargs = {}
     if "decay" in portrait_params:
       kwargs["decay"] = float(portrait_params["decay"])
