@@ -1696,33 +1696,33 @@ def circular_blur(image, radius=5):
   return blurred
 
 
-def resize_down(image):
-  down = cv2.resize(image, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
-  tx, ty = 0.25, 0.25
-  M = np.float32([[1, 0, tx], [0, 1, ty]])
-  shifted = cv2.warpAffine(down, M, (down.shape[1], down.shape[0]),
-                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
-  #blurred = cv2.GaussianBlur(shifted, (3, 3), sigmaX=0.4, sigmaY=0.4)
-  blurred = circular_blur(shifted, 3)
-  return blurred
+def pyramid_down(image):
+  tx, ty = 0.5, 0.5
+  m = np.float32([[1, 0, tx], [0, 1, ty]])
+  image = cv2.warpAffine(image, m, (image.shape[1], image.shape[0]),
+                         flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+  resized = cv2.resize(image, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
+  resized = cv2.GaussianBlur(resized, (5, 5), sigmaX=0.45, sigmaY=0.45)
+  return resized
 
 
-def resize_up(image):
-  up = cv2.resize(image, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_LINEAR)
-  shift_matrix = np.float32([[1, 0, -0.5], [0, 1, -0.5]])
-  shifted = cv2.warpAffine(up, shift_matrix,
-                           (up.shape[1], up.shape[0]),
-                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-  #blurred = cv2.GaussianBlur(shifted, (3, 3), sigmaX=0.4, sigmaY=0.4)
-  blurred = circular_blur(shifted, 3)
-  return blurred
+def pyramid_up(image):
+  image = cv2.resize(image, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_LINEAR)
+  tx, ty = -0.5, -0.5
+  m = np.float32([[1, 0, tx], [0, 1, ty]])
+  image = cv2.warpAffine(image, m, (image.shape[1], image.shape[0]),
+                         flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+  image = cv2.GaussianBlur(image, (3, 3), sigmaX=0.3, sigmaY=0.3)
+  return image
+
+
 
 
 def make_gaussian_pyramid_resize(image, levels):
   assert image.dtype == np.float32
   pyramid = [image]
   for _ in range(levels):
-    image = resize_down(image)
+    image = pyramid_down(image)
     pyramid.append(image)
   return pyramid
 
