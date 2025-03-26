@@ -1802,29 +1802,6 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
   sharp_full = compute_sharpness(expanded)
   sharp_full = percentile_normalization(sharp_full, 2, 98)
   edge_full = (sharp_full > edge_threshold).astype(np.float32)
-  def hard_pool_half(mask):
-    h, w = mask.shape
-    h2, w2 = h // 2, w // 2
-    mask = mask[:h2*2, :w2*2]
-    reshaped = mask.reshape(h2, 2, w2, 2)
-    pooled = np.sum(reshaped, axis=(1, 3))
-    return (pooled >= 2).astype(np.float32)
-  def edge_aware_pyrdown(img, edge_mask):
-    mask_inv = 1.0 - edge_mask
-    mask_inv_3d = mask_inv[:, :, None]
-    numerator = cv2.pyrDown(img * mask_inv_3d)
-    denominator = cv2.pyrDown(mask_inv)
-    denom_safe = np.clip(denominator, 1e-6, None)
-    return numerator / denom_safe[:, :, None]
-  def edge_aware_pyrup(img_low, edge_mask, size, fallback):
-    mask_inv = 1.0 - edge_mask
-    mask_inv_3d = mask_inv[:, :, None]
-    numerator = cv2.pyrUp(img_low * mask_inv_3d, dstsize=size)
-    denominator = cv2.pyrUp(mask_inv, dstsize=size)
-    denom_safe = np.clip(denominator, 1e-6, None)
-    averaged = numerator / denom_safe[:, :, None]
-    blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
-    return (1 - blend_weight) * averaged + blend_weight * fallback
   gauss_pyr = [expanded]
   for _ in range(levels):
     gauss_pyr.append(cv2.pyrDown(gauss_pyr[-1]))
@@ -1840,6 +1817,13 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
     size = (lap_pyr[i].shape[1], lap_pyr[i].shape[0])
     restored = cv2.pyrUp(restored, dstsize=size) + lap_pyr[i]
     restored_list.insert(0, restored)
+  def hard_pool_half(mask):
+    h, w = mask.shape
+    h2, w2 = h // 2, w // 2
+    mask = mask[:h2*2, :w2*2]
+    reshaped = mask.reshape(h2, 2, w2, 2)
+    pooled = np.sum(reshaped, axis=(1, 3))
+    return (pooled >= 2).astype(np.float32)
   edge_pyr = [edge_full]
   for lvl in range(levels):
     sharp_lvl = compute_sharpness(gauss_pyr[lvl + 1])
@@ -1848,12 +1832,31 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
     wall_lvl = hard_pool_half(edge_pyr[-1])
     edge_comb = np.maximum(wall_lvl, edge_lvl)
     edge_pyr.append(edge_comb)
+  def edge_aware_pyrdown(img, edge_mask, fallback):
+    mask_inv = 1.0 - edge_mask
+    mask_inv_3d = mask_inv[:, :, None]
+    numerator = cv2.pyrDown(img * mask_inv_3d)
+    denominator = cv2.pyrDown(mask_inv)
+    denom_safe = np.clip(denominator, 1e-6, None)
+    averaged = numerator / denom_safe[:, :, None]
+    blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
+    return (1 - blend_weight) * averaged + blend_weight * fallback
   edged_gauss_pyr = [expanded]
   for lvl in range(levels):
-    down = edge_aware_pyrdown(edged_gauss_pyr[-1], edge_pyr[lvl])
+    fallback = restored_list[lvl+1]
+    down = edge_aware_pyrdown(edged_gauss_pyr[-1], edge_pyr[lvl], fallback)
     edged_gauss_pyr.append(down)
   bokehs = [2 ** i for i in range(0, levels)]
   alpha_weights = [b / bokehs[-1] for b in reversed(bokehs)]
+  def edge_aware_pyrup(img_low, edge_mask, size, fallback):
+    mask_inv = 1.0 - edge_mask
+    mask_inv_3d = mask_inv[:, :, None]
+    numerator = cv2.pyrUp(img_low * mask_inv_3d, dstsize=size)
+    denominator = cv2.pyrUp(mask_inv, dstsize=size)
+    denom_safe = np.clip(denominator, 1e-6, None)
+    averaged = numerator / denom_safe[:, :, None]
+    blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
+    return (1 - blend_weight) * averaged + blend_weight * fallback
   diffused = edged_gauss_pyr[-1]
   for lvl in range(levels - 1, -1, -1):
     size = (gauss_pyr[lvl].shape[1], gauss_pyr[lvl].shape[0])
@@ -1932,16 +1935,19 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
       wall_lvl = hard_pool_half(edge_pyr[-1])
       edge_comb = np.maximum(wall_lvl, edge_lvl)
       edge_pyr.append(edge_comb)
-    def edge_aware_pyrdown(img, edge_mask):
+    def edge_aware_pyrdown(img, edge_mask, fallback):
       mask_inv = 1.0 - edge_mask
       mask_inv_3d = mask_inv[:, :, None]
       numerator = cv2.pyrDown(img * mask_inv_3d)
       denominator = cv2.pyrDown(mask_inv)
       denom_safe = np.clip(denominator, 1e-6, None)
-      return numerator / denom_safe[:, :, None]
+      averaged = numerator / denom_safe[:, :, None]
+      blend_weight = np.clip(1.0 - denominator[:, :, None], 0, 1)
+      return (1 - blend_weight) * averaged + blend_weight * fallback
     edged_gauss_pyr = [expanded]
     for lvl in range(levels):
-      down = edge_aware_pyrdown(edged_gauss_pyr[-1], edge_pyr[lvl])
+      fallback = restored_list[lvl+1]
+      down = edge_aware_pyrdown(edged_gauss_pyr[-1], edge_pyr[lvl], fallback)
       edged_gauss_pyr.append(down)
     def edge_aware_pyrup(img_low, edge_mask, size, fallback):
       mask_inv = 1.0 - edge_mask
