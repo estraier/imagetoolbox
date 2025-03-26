@@ -1221,7 +1221,7 @@ def percentile_normalization(image, low=1, high=99):
   low_val = np.percentile(image, low)
   high_val = np.percentile(image, high)
   image = (image - low_val) / (high_val - low_val)
-  return image
+  return np.clip(image, 0, 1)
 
 
 def compute_sharpness(image, base_area=1000000, blur_radius=2):
