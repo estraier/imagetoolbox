@@ -1878,7 +1878,7 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
   return np.clip(final, 0, 1)
 
 
-def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=None,
+def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=0.8,
                         bokeh_balance=0.75):
   """Applies portrait blur by stacked ECPB."""
   assert image.dtype == np.float32
@@ -1888,12 +1888,9 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  def compute_edge_thresholds(min_thresh=0.6, max_thresh=0.8):
-    return np.linspace(min_thresh, max_thresh, max_levels + 1).tolist()
-  if edge_threshold:
-    edge_thresholds = [edge_threshold] * (max_levels + 1)
-  else:
-    edge_thresholds = compute_edge_thresholds()
+  min_thresh = edge_threshold * 0.75
+  max_thresh = edge_threshold + (1 - edge_threshold) * 0.5
+  edge_thresholds = np.linspace(min_thresh, max_thresh, max_levels + 1).tolist()
   gauss_pyr_full = [expanded]
   for _ in range(max_levels):
     gauss_pyr_full.append(cv2.pyrDown(gauss_pyr_full[-1]))
