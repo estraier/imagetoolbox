@@ -426,6 +426,10 @@ class TestItbStack(unittest.TestCase):
     processed = write_caption(image, "hello|2|f0f|T")
     self.assertEqual(processed.shape, image.shape)
 
+  def test_run_command_help(self):
+    image = generate_test_image()
+    processed = write_caption(image, "hello|2|f0f|T")
+    self.assertEqual(processed.shape, image.shape)
 
 if __name__ == "__main__":
   if "-v" in sys.argv:
