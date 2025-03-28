@@ -2016,7 +2016,8 @@ def blur_image_portrait_stack(image, max_levels, decay=0.0, contrast=1.0, edge_t
   return geo_mean;
 
 
-def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.8):
+def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.8,
+                              grabcut=1.0):
   """Applies portrait blur by naive ECPB."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
@@ -2101,11 +2102,14 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
   edge_blend_mask = sigmoidal_contrast_image(sharp_final, gain=10, mid=0.9)
   edge_blend_mask = np.repeat(edge_blend_mask[:, :, np.newaxis], 3, axis=2)
   final = edge_blend_mask * image + (1 - edge_blend_mask) * result
+  if grabcut > 0:
+    focus_mask = compute_focus_grabcut(image) * grabcut
+    final = image * focus_mask[..., None] + final * (1 - focus_mask[..., None])
   return np.clip(final, 0, 1)
 
 
 def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=0.8,
-                        bokeh_balance=0.75):
+                        grabcut=1.0, bokeh_balance=0.75):
   """Applies portrait blur by stacked ECPB."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
@@ -2216,6 +2220,9 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
   edge_blend_mask = sigmoidal_contrast_image(sharp_final, gain=10, mid=0.9)
   edge_blend_mask = np.repeat(edge_blend_mask[:, :, np.newaxis], 3, axis=2)
   final = edge_blend_mask * image + (1 - edge_blend_mask) * geo_mean
+  if grabcut > 0:
+    focus_mask = compute_focus_grabcut(image) * grabcut
+    final = image * focus_mask[..., None] + final * (1 - focus_mask[..., None])
   return np.clip(final, 0, 1)
 
 
