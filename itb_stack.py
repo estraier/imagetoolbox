@@ -1220,11 +1220,43 @@ def percentile_normalization(image, low=1, high=99):
   assert image.dtype == np.float32
   low_val = np.percentile(image, low)
   high_val = np.percentile(image, high)
-  image = (image - low_val) / (high_val - low_val)
+  image = (image - low_val) / max(high_val - low_val, 1e-6)
   return np.clip(image, 0, 1)
 
 
-def compute_sharpness(image, base_area=1000000, blur_radius=2):
+def estimate_white_noise_level(gray_img, num_tiles=400, percentile=10):
+  """Estimate white noise level for Laplacian."""
+  lap = np.abs(cv2.Laplacian(gray_img, cv2.CV_32F, ksize=3))
+  h, w = lap.shape
+  area = h * w
+  tile_unit = max(round(math.sqrt(area) / math.sqrt(num_tiles)), 1)
+  tile_size_max = int(tile_unit * 1.5)
+  tile_means = []
+  x = 0
+  while x < w:
+    tile_w = tile_unit
+    if x + tile_size_max >= w:
+      tile_w = w - x
+    y = 0
+    while y < h:
+      tile_h = tile_unit
+      if y + tile_size_max >= h:
+        tile_h = h - y
+      tile = lap[y:y+tile_h, x:x+tile_w]
+      if tile.size > 0:
+        tile_means.append(np.mean(tile))
+      y += tile_h
+    x += tile_w
+  if not tile_means:
+    return 0.0
+  tile_means = np.array(tile_means)
+  k = max(1, int(len(tile_means) * percentile / 100))
+  lowest_k = np.partition(tile_means, k)[:k]
+  return float(np.mean(lowest_k))
+
+
+def compute_sharpness(image, base_area=1000000, blur_radius=2,
+                      rescale=True, high_low_balance=0.5, suppress_noise=0.5):
   """Computes sharpness using normalized Laplacian and Sobel filters."""
   assert image.dtype == np.float32
   gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -1240,16 +1272,154 @@ def compute_sharpness(image, base_area=1000000, blur_radius=2):
     ksize = math.ceil(2 * blur_radius) + 1
     gray = cv2.GaussianBlur(gray, (ksize, ksize), 0)
   laplacian = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
+  if suppress_noise > 0:
+    noise_floor = min(estimate_white_noise_level(gray), np.mean(laplacian) * 0.5)
+    laplacian = np.clip(laplacian - suppress_noise * noise_floor, 0, None)
   laplacian = z_score_normalization(laplacian)
   sobel_x = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
   sobel_y = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
   sobel_e = np.sqrt(sobel_x**2 + sobel_y**2)
   sobel = z_score_normalization(sobel_e)
-  sharpness = 0.5 * laplacian + 0.5 * sobel
-  if is_scaled:
+  sharpness = high_low_balance * laplacian + (1 - high_low_balance) * sobel
+  if is_scaled and rescale:
     sharpness = cv2.resize(sharpness, (w, h), interpolation=cv2.INTER_LANCZOS4)
   sharpness = z_score_normalization(sharpness)
   return np.clip(sharpness, -10, 10)
+
+
+def find_best_rect(image, num_tiles=100, max_window_size=5, center_alpha=0.1):
+  """Finds the best rectangle of the largest average values."""
+  assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  area = h * w
+  tile_unit = max(round(math.sqrt(area) / math.sqrt(num_tiles)), 1)
+  tile_size_max = int(tile_unit * 1.5)
+  cx = w / 2
+  cy = h / 2
+  tiles = []
+  x = 0
+  while x < w:
+    tile_w = tile_unit
+    if x + tile_size_max >= w:
+      tile_w = w - x
+    tile_column = []
+    y = 0
+    while y < h:
+      tile_h = tile_unit
+      if y + tile_size_max >= h:
+        tile_h = h - y
+      tile = image[y:y + tile_h, x:x + tile_w]
+      score = float(np.mean(tile))
+      tile_cx = x + tile_w / 2
+      tile_cy = y + tile_h / 2
+      dx = (tile_cx - cx) / (w / 2)
+      dy = (tile_cy - cy) / (h / 2)
+      dist2_norm = dx * dx + dy * dy
+      weight = math.exp(-center_alpha * dist2_norm)
+      tile_column.append((score * weight, x, y, tile_w, tile_h))
+      y += tile_h
+    tiles.append(tile_column)
+    x += tile_w
+  tile_h_count = len(tiles[0])
+  tile_w_count = len(tiles)
+  best_score = -np.inf
+  best_rect = (0, 0, tile_unit, tile_unit)
+  for win_h in range(1, max_window_size + 1):
+    for win_w in range(1, max_window_size + 1):
+      for i in range(tile_w_count - win_w + 1):
+        for j in range(tile_h_count - win_h + 1):
+          total_score = 0.0
+          x0, y0 = tiles[i][j][1], tiles[i][j][2]
+          x1, y1 = x0, y0
+          for dx in range(win_w):
+            for dy in range(win_h):
+              score, x, y, w_tile, h_tile = tiles[i + dx][j + dy]
+              total_score += score
+              x1 = max(x1, x + w_tile)
+              y1 = max(y1, y + h_tile)
+          num_tiles_in_window = win_w * win_h
+          avg_score = total_score / num_tiles_in_window
+          weighted_score = avg_score * math.sqrt(num_tiles_in_window)
+          if weighted_score > best_score:
+            best_score = weighted_score
+            best_rect = (x0, y0, x1 - x0, y1 - y0)
+  return best_rect
+
+
+def compute_centroid(image, rect):
+  """Computes the centroid of a region."""
+  x, y, w, h = rect
+  roi = image[y:y+h, x:x+w]
+  if roi.ndim == 3:
+    roi = roi.mean(axis=2)
+  rh, rw = roi.shape
+  ry, rx = np.meshgrid(np.arange(y, y+rh), np.arange(x, x+rw), indexing='ij')
+  total_weight = np.sum(roi)
+  if total_weight < 1e-6:
+    return x + w / 2, y + h / 2
+  cx = np.sum(rx * roi) / total_weight
+  cy = np.sum(ry * roi) / total_weight
+  return float(cx), float(cy)
+
+
+def draw_rectangle(image, x, y, width, height, thickness=0, color=(0.5, 0.5, 0.5)):
+  """Draws a rectangle."""
+  assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  if not thickness:
+    thickness = max(2, int(((h * w) ** 0.5) / 256))
+  pt1 = (int(x), int(y))
+  pt2 = (int(x + width), int(y + height))
+  image = cv2.rectangle(image, pt1, pt2, color, thickness)
+  return image
+
+
+def draw_focus_rectangle(image):
+  """Finds the best rectangle of the largest average values."""
+  assert image.dtype == np.float32
+  h, w = images[0].shape[:2]
+  sharpness_map = compute_sharpness(image)
+  sharpness_map = percentile_normalization(sharpness_map, 2, 98)
+  init_rect = find_best_rect(sharpness_map)
+  image = cv2.cvtColor(sharpness_map, cv2.COLOR_GRAY2BGR)
+  x, y, rw, rh = init_rect
+  pt1 = (int(x), int(y))
+  pt2 = (int(x + rw), int(y + rh))
+  color = (255, 255, 0)
+  image_uint8 = np.clip(image * 255, 0, 255).astype(np.uint8)
+  image_drawn = cv2.rectangle(image_uint8, pt1, pt2, color, 3)
+  return image_drawn.astype(np.float32) / 255.0
+
+
+def compute_focus_grabcut(image):
+  """Computes focus using GrabCut."""
+  assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  sharpness_map = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
+  small_h, small_w = sharpness_map.shape[:2]
+  rect = find_best_rect(sharpness_map)
+  rect_large = larger_rect(rect, 2, small_w, small_h)
+  centroid = compute_centroid(sharpness_map, rect)
+  centroid_rect = center_rect(rect_large, centroid, 0.5)
+  small_area = small_h * small_w
+  base_area = 100000
+  if base_area < small_area:
+    base_scale = (base_area / small_area) ** 0.5
+    small_w = round(small_w * base_scale)
+    small_h = round(small_h * base_scale)
+    small_image = cv2.resize(image, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    centroid_rect = [round(x * base_scale) for x in centroid_rect]
+  byte_image = (np.clip(small_image * 255, 0, 255)).astype(np.uint8)
+  bgd_model = np.zeros((1, 65), np.float64)
+  fgd_model = np.zeros((1, 65), np.float64)
+  mask = np.zeros((small_h, small_w), np.uint8)
+  x, y, rw, rh = centroid_rect
+  cv2.grabCut(byte_image, mask, (x, y, rw, rh), bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
+  mask_binary = np.where(
+    (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1.0, 0.0).astype(np.float32)
+  mask_soft = cv2.GaussianBlur(mask_binary, (11, 11), 0)
+  mask_fullsize = cv2.resize(mask_soft, (w, h), interpolation=cv2.INTER_LINEAR)
+  return np.clip(mask_fullsize, 0, 1)
 
 
 def make_gaussian_pyramid(image, levels):
@@ -1637,7 +1807,62 @@ def convert_grayscale_image(image, name):
     gray_image = normalize_edge_image(gray_image)
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
+  elif name in ["focus"]:
+    gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
+    gray_image = normalize_edge_image(gray_image)
+    h, w = gray_image.shape[:2]
+    rect = find_best_rect(gray_image)
+    rect_large = larger_rect(rect, 2, w, h)
+    centroid = compute_centroid(gray_image, rect)
+    centroid_rect = center_rect(rect_large, centroid, 0.1)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    color_image = draw_rectangle(color_image, *rect, 0, (1, 0, 0))
+    color_image = draw_rectangle(color_image, *rect_large, 0, (0, 0, 1))
+    color_image = draw_rectangle(color_image, *centroid_rect, 0, (0, 1, 0))
+    return np.clip(color_image, 0, 1)
+  elif name in ["grabcut"]:
+    gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
+    gray_image = normalize_edge_image(gray_image)
+    grabcut = compute_focus_grabcut(image)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    overlay = np.zeros_like(color_image)
+    overlay[:, :, 2] = 1.0
+    alpha = grabcut[..., np.newaxis] * 0.5
+    color_image = (1 - alpha) * color_image + alpha * overlay
+    return np.clip(color_image, 0, 1)
   raise ValueError(f"Unknown grayscale name: {name}")
+
+
+def larger_rect(rect, area_ratio, w, h):
+  """Compute a rectangle within the boundary."""
+  x, y, rw, rh = rect
+  cx = x + rw / 2
+  cy = y + rh / 2
+  scale = math.sqrt(area_ratio)
+  new_w = rw * scale
+  new_h = rh * scale
+  new_x = max(0, int(round(cx - new_w / 2)))
+  new_y = max(0, int(round(cy - new_h / 2)))
+  new_x2 = min(w, int(round(cx + new_w / 2)))
+  new_y2 = min(h, int(round(cy + new_h / 2)))
+  return new_x, new_y, new_x2 - new_x, new_y2 - new_y
+
+
+def center_rect(rect, center, area_ratio):
+  """Compute a rectangle around the center."""
+  x, y, w, h = rect
+  if center is None:
+    cx, cy = x + w / 2, y + h / 2
+  else:
+    cx, cy = center
+  scale = math.sqrt(area_ratio)
+  rel_cx = (cx - x) / w
+  rel_cy = (cy - y) / h
+  new_w = w * scale
+  new_h = h * scale
+  new_x = cx - rel_cx * new_w
+  new_y = cy - rel_cy * new_h
+  return round(new_x), round(new_y), round(new_w), round(new_h)
 
 
 def normalize_edge_image(image):
@@ -1662,6 +1887,7 @@ def blur_image_gaussian(image, radius):
   assert image.dtype == np.float32
   ksize = math.ceil(2 * radius) + 1
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
+
 
 
 
