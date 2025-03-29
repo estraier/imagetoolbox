@@ -1806,6 +1806,16 @@ def convert_grayscale_image(image, name):
     gray_image = normalize_edge_image(gray_image)
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
+  elif name in ["stddev"]:
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    square_image = gray_image ** 2
+    level = max(1, compute_levels_blur_image_portrait(gray_image) - 2)
+    mean = blur_image_pyramid(gray_image, level)
+    mean_sq = blur_image_pyramid(square_image, level)
+    stddev = np.sqrt(np.clip(mean_sq - mean**2, 1e-6, None))
+    gray_image = normalize_edge_image(stddev)
+    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_image, 0, 1)
   elif name in ["sharpness"]:
     gray_image = compute_sharpness(image)
     gray_image = normalize_edge_image(gray_image)
