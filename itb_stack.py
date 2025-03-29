@@ -1354,7 +1354,7 @@ def find_best_rect(tiles, max_window_size=5, size_penalty=0.5):
   return best_rect
 
 
-def find_good_focus_tiles(tiles, size_penalty=0.7):
+def find_good_focus_tiles(tiles, size_penalty=0.75):
   """Finds a good subset of focus tiles that maximize weighted score."""
   flat_tiles = [tile for col in tiles for tile in col]
   flat_tiles = sorted(flat_tiles, key=lambda t: t[0], reverse=True)
@@ -1400,12 +1400,14 @@ def draw_rectangle(image, x, y, width, height, thickness=0, color=(0.5, 0.5, 0.5
   return image
 
 
-def compute_focus_grabcut(image, rect_closed=1.0, rect_open=1.0, tiles_closed=1.0,
-                          tiles_open=1.0, use_rms=True):
-  """Computes focus using multiple GrabCut variants with weighted blending."""
+def compute_focus_grabcut(image, rect_closed=1.0, rect_open=1.0,
+                          tiles_closed=1.0, tiles_open=1.0,
+                          use_rms=True, sharpness_percentile=95):
+  """Computes focus mask using multiple GrabCut strategies and blends them."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
-  sharpness_map = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
+  sharpness_map = compute_sharpness(image, high_low_balance=0.9,
+                                    suppress_noise=0.9)
   sharpness_map = percentile_normalization(sharpness_map, 2, 98)
   small_h, small_w = sharpness_map.shape[:2]
   tiles = extract_mean_tiles(sharpness_map)
@@ -1420,58 +1422,80 @@ def compute_focus_grabcut(image, rect_closed=1.0, rect_open=1.0, tiles_closed=1.
     base_scale = (base_area / small_area) ** 0.5
     small_w = round(small_w * base_scale)
     small_h = round(small_h * base_scale)
-    small_image = cv2.resize(image, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    small_image = cv2.resize(image, (small_w, small_h),
+                             interpolation=cv2.INTER_AREA)
     centroid_rect = [round(x * base_scale) for x in centroid_rect]
     rect_large = [round(x * base_scale) for x in rect_large]
     good_tiles = [(s, round(x * base_scale), round(y * base_scale),
                    round(w * base_scale), round(h * base_scale))
                   for s, x, y, w, h in good_tiles]
+    sharpness_map = cv2.resize(sharpness_map, (small_w, small_h),
+                               interpolation=cv2.INTER_LINEAR)
   else:
     small_image = image
+  sharp_threshold = np.percentile(sharpness_map, sharpness_percentile)
   byte_image = (np.clip(small_image * 255, 0, 255)).astype(np.uint8)
   all_masks = []
   total_weight = 0.0
   def run_grabcut_with_rect(rect, definite_background=False):
-    mask = np.zeros((small_h, small_w), np.uint8)
+    x, y, rw, rh = rect
     if definite_background:
-      mask[:, :] = cv2.GC_BGD
-      x, y, rw, rh = rect
+      mask = np.full((small_h, small_w), cv2.GC_BGD, np.uint8)
       mask[y:y+rh, x:x+rw] = cv2.GC_PR_FGD
-      mode = cv2.GC_INIT_WITH_MASK
-      rect_arg = None
+      mask[(mask == cv2.GC_BGD) & (sharpness_map > sharp_threshold)] = cv2.GC_PR_BGD
     else:
-      x, y, rw, rh = rect
-      mode = cv2.GC_INIT_WITH_RECT
-      rect_arg = (x, y, rw, rh)
+      mask = np.full((small_h, small_w), cv2.GC_PR_BGD, np.uint8)
+      mask[y:y+rh, x:x+rw] = cv2.GC_PR_FGD
     bgd_model = np.zeros((1, 65), np.float64)
     fgd_model = np.zeros((1, 65), np.float64)
-    cv2.grabCut(byte_image, mask, rect_arg, bgd_model, fgd_model, 5, mode)
+    cv2.grabCut(byte_image, mask, None,
+                bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_MASK)
     mask_binary = np.where((mask == cv2.GC_FGD) |
                            (mask == cv2.GC_PR_FGD), 1.0, 0.0).astype(np.float32)
     return mask_binary
   def run_grabcut_with_tiles(tile_list, definite_background=False):
-    mask = (np.full((small_h, small_w), cv2.GC_BGD, np.uint8)
-            if definite_background else np.full((small_h, small_w), cv2.GC_PR_BGD, np.uint8))
-    for s, x, y, tw, th in tile_list:
-      mask[y:y+th, x:x+tw] = cv2.GC_PR_FGD if not definite_background else cv2.GC_FGD
+    if definite_background:
+      mask = np.full((small_h, small_w), cv2.GC_BGD, np.uint8)
+      for s, x, y, tw, th in tile_list:
+        mask[y:y+th, x:x+tw] = cv2.GC_PR_FGD
+      mask[(mask == cv2.GC_BGD) & (sharpness_map > sharp_threshold)] = cv2.GC_PR_BGD
+    else:
+      mask = np.full((small_h, small_w), cv2.GC_PR_BGD, np.uint8)
+      for s, x, y, tw, th in tile_list:
+        mask[y:y+th, x:x+tw] = cv2.GC_PR_FGD
     bgd_model = np.zeros((1, 65), np.float64)
     fgd_model = np.zeros((1, 65), np.float64)
-    cv2.grabCut(byte_image, mask, None, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_MASK)
+    cv2.grabCut(byte_image, mask, None,
+                bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_MASK)
     mask_binary = np.where((mask == cv2.GC_FGD) |
                            (mask == cv2.GC_PR_FGD), 1.0, 0.0).astype(np.float32)
     return mask_binary
+  def apply_area_penalty(weight, mask, threshold=0.10):
+    fg_ratio = np.mean(mask)
+    if fg_ratio <= threshold:
+      return weight
+    penalty = 1.0 - (fg_ratio - threshold) / (1.0 - threshold)
+    return weight * penalty
   if rect_closed > 0:
-    all_masks.append((rect_closed, run_grabcut_with_rect(centroid_rect, definite_background=True)))
-    total_weight += rect_closed
+    mask = run_grabcut_with_rect(centroid_rect, definite_background=True)
+    weight = apply_area_penalty(rect_closed, mask)
+    all_masks.append((weight, mask))
+    total_weight += weight
   if rect_open > 0:
-    all_masks.append((rect_open, run_grabcut_with_rect(rect_large, definite_background=False)))
-    total_weight += rect_open
+    mask = run_grabcut_with_rect(rect_large, definite_background=False)
+    weight = apply_area_penalty(rect_open, mask)
+    all_masks.append((weight, mask))
+    total_weight += weight
   if tiles_closed > 0:
-    all_masks.append((tiles_closed, run_grabcut_with_tiles(good_tiles, definite_background=True)))
-    total_weight += tiles_closed
+    mask = run_grabcut_with_tiles(good_tiles, definite_background=True)
+    weight = apply_area_penalty(tiles_closed, mask)
+    all_masks.append((weight, mask))
+    total_weight += weight
   if tiles_open > 0:
-    all_masks.append((tiles_open, run_grabcut_with_tiles(good_tiles, definite_background=False)))
-    total_weight += tiles_open
+    mask = run_grabcut_with_tiles(good_tiles, definite_background=False)
+    weight = apply_area_penalty(tiles_open, mask)
+    all_masks.append((weight, mask))
+    total_weight += weight
   if total_weight == 0:
     return np.zeros((h, w), np.float32)
   combined = np.zeros((small_h, small_w), np.float32)

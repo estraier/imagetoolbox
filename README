@@ -134,6 +134,7 @@ especially useful for portraiture.
   $ itb_stack.py input*.jpg -o output.jpg --portrait auto  # well-balanced
   $ itb_stack.py input*.jpg -o output.jpg --portrait 6     # max 2^6-pixel blur
   $ itb_stack.py input*.jpg -o output.jpg --portrait auto:decay=0.2  # adjust strength
+  $ itb_stack.py input*.jpg -o output.jpg --portrait 4:repeat=2      # smoother bokeh
 
 If "exiftool" command is available on your system, EXIF metadata and ICC profile of the first
 input image are preserved in the merged image.
