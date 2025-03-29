@@ -1290,8 +1290,8 @@ def compute_sharpness(image, base_area=1000000, blur_radius=2,
   return np.clip(sharpness, -10, 10)
 
 
-def find_best_rect(image, num_tiles=100, max_window_size=5, center_alpha=0.1):
-  """Finds the best rectangle of the largest average values."""
+def extract_mean_tiles(image, num_tiles=100, center_alpha=0.1):
+  """Extracts tiles with stats from an image."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
   area = h * w
@@ -1323,10 +1323,15 @@ def find_best_rect(image, num_tiles=100, max_window_size=5, center_alpha=0.1):
       y += tile_h
     tiles.append(tile_column)
     x += tile_w
+  return tiles
+
+
+def find_best_rect(tiles, max_window_size=5, size_penalty=0.5):
+  """Finds the best rectangle of the largest average values."""
   tile_h_count = len(tiles[0])
   tile_w_count = len(tiles)
   best_score = -np.inf
-  best_rect = (0, 0, tile_unit, tile_unit)
+  best_rect = (0, 0, 0, 0)
   for win_h in range(1, max_window_size + 1):
     for win_w in range(1, max_window_size + 1):
       for i in range(tile_w_count - win_w + 1):
@@ -1342,11 +1347,28 @@ def find_best_rect(image, num_tiles=100, max_window_size=5, center_alpha=0.1):
               y1 = max(y1, y + h_tile)
           num_tiles_in_window = win_w * win_h
           avg_score = total_score / num_tiles_in_window
-          weighted_score = avg_score * math.sqrt(num_tiles_in_window)
+          weighted_score = avg_score * (num_tiles_in_window ** (1 - size_penalty))
           if weighted_score > best_score:
             best_score = weighted_score
             best_rect = (x0, y0, x1 - x0, y1 - y0)
   return best_rect
+
+
+def find_good_focus_tiles(tiles, size_penalty=0.7):
+  """Finds a good subset of focus tiles that maximize weighted score."""
+  flat_tiles = [tile for col in tiles for tile in col]
+  flat_tiles = sorted(flat_tiles, key=lambda t: t[0], reverse=True)
+  best_score = -np.inf
+  total_score = 0.0
+  best_index = 0
+  for i in range(len(flat_tiles)):
+    total_score += flat_tiles[i][0]
+    avg_score = total_score / (i + 1)
+    weighted_score = avg_score * ((i + 1) ** (1 - size_penalty))
+    if weighted_score > best_score:
+      best_score = weighted_score
+      best_index = i + 1
+  return flat_tiles[:best_index]
 
 
 def compute_centroid(image, rect):
@@ -1373,25 +1395,9 @@ def draw_rectangle(image, x, y, width, height, thickness=0, color=(0.5, 0.5, 0.5
     thickness = max(2, int(((h * w) ** 0.5) / 256))
   pt1 = (int(x), int(y))
   pt2 = (int(x + width), int(y + height))
+  color = color[2], color[1], color[0]
   image = cv2.rectangle(image, pt1, pt2, color, thickness)
   return image
-
-
-def draw_focus_rectangle(image):
-  """Finds the best rectangle of the largest average values."""
-  assert image.dtype == np.float32
-  h, w = images[0].shape[:2]
-  sharpness_map = compute_sharpness(image)
-  sharpness_map = percentile_normalization(sharpness_map, 2, 98)
-  init_rect = find_best_rect(sharpness_map)
-  image = cv2.cvtColor(sharpness_map, cv2.COLOR_GRAY2BGR)
-  x, y, rw, rh = init_rect
-  pt1 = (int(x), int(y))
-  pt2 = (int(x + rw), int(y + rh))
-  color = (255, 255, 0)
-  image_uint8 = np.clip(image * 255, 0, 255).astype(np.uint8)
-  image_drawn = cv2.rectangle(image_uint8, pt1, pt2, color, 3)
-  return image_drawn.astype(np.float32) / 255.0
 
 
 def compute_focus_grabcut(image):
@@ -1400,7 +1406,8 @@ def compute_focus_grabcut(image):
   h, w = image.shape[:2]
   sharpness_map = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
   small_h, small_w = sharpness_map.shape[:2]
-  rect = find_best_rect(sharpness_map)
+  tiles = extract_mean_tiles(sharpness_map)
+  rect = find_best_rect(tiles)
   rect_large = larger_rect(rect, 2, small_w, small_h)
   centroid = compute_centroid(sharpness_map, rect)
   centroid_rect = center_rect(rect_large, centroid, 0.5)
@@ -1825,7 +1832,8 @@ def convert_grayscale_image(image, name):
     gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
     gray_image = normalize_edge_image(gray_image)
     h, w = gray_image.shape[:2]
-    rect = find_best_rect(gray_image)
+    tiles = extract_mean_tiles(gray_image)
+    rect = find_best_rect(tiles)
     rect_large = larger_rect(rect, 2, w, h)
     centroid = compute_centroid(gray_image, rect)
     centroid_rect = center_rect(rect_large, centroid, 0.1)
@@ -1833,6 +1841,10 @@ def convert_grayscale_image(image, name):
     color_image = draw_rectangle(color_image, *rect, 0, (1, 0, 0))
     color_image = draw_rectangle(color_image, *rect_large, 0, (0, 0, 1))
     color_image = draw_rectangle(color_image, *centroid_rect, 0, (0, 1, 0))
+    good_tiles = find_good_focus_tiles(tiles)
+    for tile in good_tiles:
+      tile_rect = tile[1:]
+      color_image = draw_rectangle(color_image, *tile_rect, 2, (0, 0.5, 0.5))
     return np.clip(color_image, 0, 1)
   elif name in ["grabcut"]:
     gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
