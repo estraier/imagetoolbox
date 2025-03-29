@@ -1992,15 +1992,15 @@ def compute_levels_blur_image_portrait(image):
   return max(int(math.log2(area_root)) - 5, 2)
 
 
-def blur_image_portrait_stack(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=0.8,
+def blur_image_portrait_stack(image, max_level, decay=0.0, contrast=1.0, edge_threshold=0.8,
                               bokeh_balance=0.75):
   """Applies portrait blur by stacked ECPB in an old way."""
   results = []
-  for i in range(max_levels):
+  for i in range(max_level):
     results.append(blur_image_portrait_naive(image, i + 1, decay, contrast, edge_threshold))
   def compute_geometric_weights():
     scores = []
-    for level in range(1, max_levels + 1):
+    for level in range(1, max_level + 1):
       bokeh_benefit = math.log2(level + 1)
       artifact_cost = math.sqrt(level)
       score = bokeh_balance * bokeh_benefit - (1 - bokeh_balance) * artifact_cost
@@ -2016,9 +2016,8 @@ def blur_image_portrait_stack(image, max_levels, decay=0.0, contrast=1.0, edge_t
   return geo_mean;
 
 
-def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.8,
-                              grabcut=1.0):
-  """Applies portrait blur by naive ECPB."""
+def blur_image_naive_ecpb(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.8):
+  """Applies portrait blur by naive Edge-Contained Pyramid Blur."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
   levels = min(levels, int(math.log2(min(h, w))) - 1)
@@ -2097,36 +2096,28 @@ def blur_image_portrait_naive(image, levels, decay=0.0, contrast=1.0, edge_thres
     gain = np.clip(gain, 1.0, 2.0)
     diffused = alpha * diffused * gain + (1 - alpha) * edged_gauss_pyr[lvl]
   result = diffused[:h, :w]
-  sharp_final = compute_sharpness(image, base_area=sys.maxsize, blur_radius=0)
-  sharp_final = percentile_normalization(sharp_final, 2, 98)
-  edge_blend_mask = sigmoidal_contrast_image(sharp_final, gain=10, mid=0.9)
-  edge_blend_mask = np.repeat(edge_blend_mask[:, :, np.newaxis], 3, axis=2)
-  final = edge_blend_mask * image + (1 - edge_blend_mask) * result
-  if grabcut > 0:
-    focus_mask = compute_focus_grabcut(image) * grabcut
-    final = image * focus_mask[..., None] + final * (1 - focus_mask[..., None])
-  return np.clip(final, 0, 1)
+  return np.clip(result, 0, 1)
 
 
-def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_threshold=0.8,
-                        grabcut=1.0, bokeh_balance=0.75):
-  """Applies portrait blur by stacked ECPB."""
+def blur_image_stacked_ecpb(image, max_level, decay=0.0, contrast=1.0, edge_threshold=0.8,
+                            bokeh_balance=0.75):
+  """Applies portrait blur by naive stacked Edge-Contained Pyramid Blur."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
-  max_levels = min(max_levels, int(math.log2(min(h, w))) - 1)
-  factor = 2 ** max_levels
+  max_level = min(max_level, int(math.log2(min(h, w))) - 1)
+  factor = 2 ** max_level
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
   min_thresh = edge_threshold * 0.75
   max_thresh = edge_threshold + (1 - edge_threshold) * 0.5
-  edge_thresholds = np.linspace(min_thresh, max_thresh, max_levels + 1).tolist()
+  edge_thresholds = np.linspace(min_thresh, max_thresh, max_level + 1).tolist()
   gauss_pyr_full = [expanded]
-  for _ in range(max_levels):
+  for _ in range(max_level):
     gauss_pyr_full.append(cv2.pyrDown(gauss_pyr_full[-1]))
   lap_pyr_full = []
   sizes_full = []
-  for i in range(max_levels):
+  for i in range(max_level):
     up = cv2.pyrUp(gauss_pyr_full[i + 1],
                    dstsize=(gauss_pyr_full[i].shape[1], gauss_pyr_full[i].shape[0]))
     lap = gauss_pyr_full[i] - up
@@ -2138,10 +2129,10 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
   edge_full = (sharp_full > edge_thresholds[0]).astype(np.float32)
   sharpness_pyr_full = [
     percentile_normalization(compute_sharpness(gauss_pyr_full[i + 1]), 2, 98)
-    for i in range(max_levels)
+    for i in range(max_level)
   ]
   results = []
-  for levels in range(1, max_levels + 1):
+  for levels in range(1, max_level + 1):
     gauss_pyr = gauss_pyr_full[:levels + 1]
     lap_pyr = lap_pyr_full[:levels] + [gauss_pyr_full[levels]]
     sizes = sizes_full[:levels + 1]
@@ -2202,7 +2193,7 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
     results.append(diffused[:h, :w])
   def compute_geometric_weights():
     scores = []
-    for level in range(1, max_levels + 1):
+    for level in range(1, max_level + 1):
       bokeh_benefit = math.log2(level + 1)
       artifact_cost = math.sqrt(level)
       score = bokeh_balance * bokeh_benefit - (1 - bokeh_balance) * artifact_cost
@@ -2215,15 +2206,33 @@ def blur_image_portrait(image, max_levels, decay=0.0, contrast=1.0, edge_thresho
   for r, w in zip(results, weights):
     log_sum += w * np.log(np.clip(r, 1e-6, 1.0))
   geo_mean = np.exp(log_sum)
-  sharp_final = compute_sharpness(image, base_area=sys.maxsize, blur_radius=0)
-  sharp_final = percentile_normalization(sharp_final, 2, 98)
-  edge_blend_mask = sigmoidal_contrast_image(sharp_final, gain=10, mid=0.9)
-  edge_blend_mask = np.repeat(edge_blend_mask[:, :, np.newaxis], 3, axis=2)
-  final = edge_blend_mask * image + (1 - edge_blend_mask) * geo_mean
+  return np.clip(geo_mean, 0, 1)
+
+
+def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshold=0.8,
+                        bokeh_balance=0.75, repeat=1, grabcut=1.0, finish_edge=1.0):
+  """Applies portrait blur according to the configuration."""
+  blurred = image
+  for i in range(repeat):
+    if max_level > 0:
+      blurred = blur_image_stacked_ecpb(
+        blurred, max_level, decay=decay, contrast=contrast,
+        edge_threshold=edge_threshold, bokeh_balance=bokeh_balance)
+    else:
+      blurred = blur_image_naive_ecpb(
+        blurred, -max_level, decay=decay, contrast=contrast,
+        edge_threshold=edge_threshold)
+  restored = blurred
   if grabcut > 0:
-    focus_mask = compute_focus_grabcut(image) * grabcut
-    final = image * focus_mask[..., None] + final * (1 - focus_mask[..., None])
-  return np.clip(final, 0, 1)
+    mask = compute_focus_grabcut(image) * grabcut
+    restored = image * mask[..., None] + restored * (1 - mask[..., None])
+  if finish_edge > 0:
+    mask = compute_sharpness(image, base_area=sys.maxsize, blur_radius=0)
+    mask = percentile_normalization(mask, 2, 98)
+    mask = sigmoidal_contrast_image(mask, gain=10, mid=0.9) * finish_edge
+    mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+    restored = mask * image + (1 - mask) * restored
+  return np.clip(restored, 0, 1)
 
 
 def unsharp_image_gaussian(image, radius):
@@ -2404,6 +2413,12 @@ def parse_num_opts_expression(expr, defval=0):
     else:
       params[name] = "true"
   return params
+
+
+def copy_param_to_kwargs(params, kwargs, name, convert_type):
+  """Copies an option parameter into the kwargs."""
+  if name in params:
+    kwargs[name] = convert_type(params[name])
 
 
 def parse_trim_expression(expr):
@@ -2795,16 +2810,15 @@ def edit_image(image, args):
   if portrait_name == "auto":
     portrait_name = str(compute_levels_blur_image_portrait(image))
   portrait_levels = int(portrait_name)
-  if portrait_levels > 0:
+  if portrait_levels != 0:
     kwargs = {}
-    if "decay" in portrait_params:
-      kwargs["decay"] = float(portrait_params["decay"])
-    if "contrast" in portrait_params:
-      kwargs["contrast"] = float(portrait_params["contrast"])
-    if "edge_threshold" in portrait_params:
-      kwargs["edge_threshold"] = float(portrait_params["edge_threshold"])
-    if "bokeh_balance" in portrait_params:
-      kwargs["bokeh_balance"] = float(portrait_params["bokeh_balance"])
+    copy_param_to_kwargs(portrait_params, kwargs, "decay", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "contrast", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "edge_threshold", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "bokeh_balance", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "repeat", int)
+    copy_param_to_kwargs(portrait_params, kwargs, "grabcut", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "finish_edge", float)
     logger.info(f"Applying portrait blur by {portrait_levels} levels")
     image = blur_image_portrait(image, portrait_levels, **kwargs)
   if args.unsharp > 0:
