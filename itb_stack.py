@@ -243,7 +243,12 @@ def estimate_image_memory_size(image):
 
 def parse_boolean(text):
   """Parse a boolean expression and get its boolean value."""
-  return text.strip().lower() in ["true", "t", "1", "yes", "y"]
+  value = text.strip().lower()
+  if value in ["true", "t", "1", "yes", "y"]:
+    return True
+  if value in ["false", "f", "0", "no", "n"]:
+    return False
+  raise ValueError(f"invalid boolean expression '{text}'")
 
 
 def parse_numeric(text):
@@ -592,10 +597,8 @@ def adjust_white_balance_image(image, expr="auto"):
   name = params["name"]
   if name in ["auto", "auto-scene", "auto-temp"]:
     kwargs = {}
-    if "edge_weight" in params:
-      kwargs["edge_weight"] = int(params["edge_weight"])
-    if "luminance_weight" in params:
-      kwargs["luminance_weight"] = float(params["luminance_weight"])
+    copy_param_to_kwargs(params, kwargs, "edge_weight", float)
+    copy_param_to_kwargs(params, kwargs, "luminance_weight", float)
     mean_r, mean_g, mean_b = compute_auto_white_balance_factors(image, **kwargs)
     if name == "auto-temp":
       kelvin = convert_rgb_to_kelvin(mean_r, mean_g, mean_b)
@@ -1517,6 +1520,7 @@ def merge_images_grid(images, columns=1, margin=0, background=(0.5, 0.5, 0.5)):
     heights[row] = max(heights[row], h)
   grid_width = sum(widths) + (columns + 1) * margin
   grid_height = sum(heights) + (rows + 1) * margin
+  background = background[2], background[1], background[0]
   output = np.full((grid_height, grid_width, 3), background, dtype=np.float32)
   y_offset = margin
   for row in range(rows):
@@ -2332,11 +2336,11 @@ def parse_color_expr(expr):
     if len(expr) == 3:
       r, g, b = (int(expr[0] * 2, 16), int(expr[1] * 2, 16),
                  int(expr[2] * 2, 16))
-      return r, g, b
+      return r / 255, g / 255, b / 255
     elif len(expr) == 6:
       r, g, b = (int(expr[0:2], 16), int(expr[2:4], 16), int(expr[4:6], 16))
-      return r, g, b
-  return None
+      return r / 255, g / 255, b / 255
+  raise ValueError(f"invalid color expression '{expr}'")
 
 
 def write_caption(image, capexpr):
@@ -2352,12 +2356,9 @@ def write_caption(image, capexpr):
       font_ratio = float(match.group(1))
   font_scale = 0.002 * np.sqrt(h * w) * font_ratio
   thickness = max(2, int(font_scale * 1.5))
-  r, g, b = (255, 255, 255)
+  r, g, b = (0.5, 0.5, 0.5)
   if len(fields) > 2:
-    color = parse_color_expr(fields[2])
-    if color:
-      r, g, b = color
-  r, g, b = float(r) / 255, float(g) / 255, float(b) / 255
+    r, g, b = parse_color_expr(fields[2])
   font_color = (b, g, r)
   line_type = cv2.LINE_AA
   tw, th = cv2.getTextSize(text, font, font_scale, thickness)[0]
@@ -2415,10 +2416,15 @@ def parse_num_opts_expression(expr, defval=0):
   return params
 
 
-def copy_param_to_kwargs(params, kwargs, name, convert_type):
+def copy_param_to_kwargs(params, kwargs, name, convert_type=None):
   """Copies an option parameter into the kwargs."""
   if name in params:
-    kwargs[name] = convert_type(params[name])
+    value = params[name]
+    if callable(convert_type):
+      value = convert_type(value)
+    elif type(convert_type) == bool:
+      value = convert_type
+    kwargs[name] = value
 
 
 def parse_trim_expression(expr):
@@ -2610,30 +2616,22 @@ def main():
   elif align_name in ["orb", "o"]:
     logger.info(f"Aligning images by ORB")
     kwargs = {}
-    if "nfeatures" in align_params:
-      kwargs["nfeatures"] = int(align_params["nfeatures"])
-    if "shift_limit" in align_params:
-      kwargs["shift_limit"] = float(align_params["shift_limit"])
-    if "denoise" in align_params:
-      kwargs["denoise"] = int(align_params["denoise"])
+    copy_param_to_kwargs(align_params, kwargs, "nfeatures", int)
+    copy_param_to_kwargs(align_params, kwargs, "shift_limit", float)
+    copy_param_to_kwargs(align_params, kwargs, "denoise", int)
     images = align_images_orb(images, aligned_indices, **kwargs)
   elif align_name in ["sift", "s"]:
     logger.info(f"Aligning images by SIFT")
     kwargs = {}
-    if "nfeatures" in align_params:
-      kwargs["nfeatures"] = int(align_params["nfeatures"])
-    if "shift_limit" in align_params:
-      kwargs["shift_limit"] = float(align_params["shift_limit"])
-    if "denoise" in align_params:
-      kwargs["denoise"] = int(align_params["denoise"])
+    copy_param_to_kwargs(align_params, kwargs, "nfeatures", int)
+    copy_param_to_kwargs(align_params, kwargs, "shift_limit", float)
+    copy_param_to_kwargs(align_params, kwargs, "denoise", int)
     images = align_images_sift(images, aligned_indices, **kwargs)
   elif align_name in ["ecc", "e"]:
     logger.info(f"Aligning images by ECC")
     kwargs = {}
-    if "use_affine" in align_params:
-      kwargs["use_affine"] = parse_boolean(align_params["use_affine"])
-    if "denoise" in align_params:
-      kwargs["denoise"] = int(align_params["denoise"])
+    copy_param_to_kwargs(align_params, kwargs, "use_affine", parse_boolean)
+    copy_param_to_kwargs(align_params, kwargs, "denoise", int)
     images = align_images_ecc(images, aligned_indices, **kwargs)
   elif align_name in ["hugin", "h"]:
     logger.info(f"Aligning images by Hugin")
@@ -2767,18 +2765,14 @@ def edit_image(image, args):
   if histeq_num > 0:
     logger.info(f"Applying CLAHE enhancement")
     kwargs = {}
-    if "gamma" in histeq_params:
-      kwargs["gamma"] = float(histeq_params["gamma"])
-    if "no-restore_color" in histeq_params:
-      kwargs["restore_color"] = False
+    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
     image = apply_clahe_image(image, histeq_num, **kwargs)
   elif histeq_num < 0:
     logger.info(f"Applying global HE enhancement")
     kwargs = {}
-    if "gamma" in histeq_params:
-      kwargs["gamma"] = float(histeq_params["gamma"])
-    if "no-restore_color" in histeq_params:
-      kwargs["restore_color"] = False
+    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
     image = apply_global_histeq_image(image, **kwargs)
   if args.saturate != 0:
     logger.info(f"Saturating colors")
@@ -2800,10 +2794,8 @@ def edit_image(image, args):
   if blur_num < 0:
     logger.info(f"Applying Pyramid blur")
     kwargs = {}
-    if "decay" in blur_params:
-      kwargs["decay"] = float(blur_params["decay"])
-    if "contrast" in blur_params:
-      kwargs["contrast"] = float(blur_params["contrast"])
+    copy_param_to_kwargs(blur_params, kwargs, "decay", float)
+    copy_param_to_kwargs(blur_params, kwargs, "contrast", float)
     image = blur_image_pyramid(image, int(blur_num) * -1, **kwargs)
   portrait_params = parse_name_opts_expression(args.portrait)
   portrait_name = portrait_params["name"]
@@ -2874,10 +2866,8 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif merge_name in ["denoise", "dn", "bgmbm"]:
     logger.info(f"Merging images by denoise composition")
     kwargs = {}
-    if "clip_limit" in merge_params:
-      kwargs["clip_limit"] = float(merge_params["clip_limit"])
-    if "blur_radius" in merge_params:
-      kwargs["blur_radius"] = int(merge_params["blur_radius"])
+    copy_param_to_kwargs(merge_params, kwargs, "clip_limit", float)
+    copy_param_to_kwargs(merge_params, kwargs, "blur_radius", float)
     merged_image = merge_images_denoise(images, **kwargs)
     be_adjusted = True
   elif merge_name in ["weighted", "w"]:
@@ -2902,23 +2892,16 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   elif merge_name in ["focus", "f"]:
     logger.info(f"Merging images by focus stacking")
     kwargs = {}
-    if "smoothness" in merge_params:
-      kwargs["smoothness"] = float(merge_params["smoothness"])
-    if "pyramid_levels" in merge_params:
-      kwargs["pyramid_levels"] = int(merge_params["pyramid_levels"])
+    copy_param_to_kwargs(merge_params, kwargs, "smoothness", float)
+    copy_param_to_kwargs(merge_params, kwargs, "pyramid_levels", float)
     merged_image = merge_images_focus_stacking(images, **kwargs)
     be_adjusted = len(images) > 1
   elif merge_name in ["grid", "g"]:
     logger.info(f"Merging images in a grid")
     kwargs = {}
-    if "columns" in merge_params:
-      kwargs["columns"] = int(merge_params["columns"])
-    if "margin" in merge_params:
-      kwargs["margin"] = int(merge_params["margin"])
-    if "background" in merge_params:
-      color = parse_color_expr(merge_params["background"])
-      if color:
-        kwargs["background"] = (color[0] / 255, color[1] / 255, color[2] / 255)
+    copy_param_to_kwargs(merge_params, kwargs, "columns", int)
+    copy_param_to_kwargs(merge_params, kwargs, "margin", int)
+    copy_param_to_kwargs(merge_params, kwargs, "background", parse_color_expr)
     merged_image = merge_images_grid(images, **kwargs)
   elif merge_name in ["stitch", "s"]:
     logger.info(f"Stitching images as a panoramic photo")
