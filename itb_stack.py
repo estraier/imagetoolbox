@@ -1400,13 +1400,16 @@ def draw_rectangle(image, x, y, width, height, thickness=0, color=(0.5, 0.5, 0.5
   return image
 
 
-def compute_focus_grabcut(image):
-  """Computes focus using GrabCut."""
+def compute_focus_grabcut(image, rect_closed=1.0, rect_open=1.0, tiles_closed=1.0,
+                          tiles_open=1.0, use_rms=True):
+  """Computes focus using multiple GrabCut variants with weighted blending."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
   sharpness_map = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
+  sharpness_map = percentile_normalization(sharpness_map, 2, 98)
   small_h, small_w = sharpness_map.shape[:2]
   tiles = extract_mean_tiles(sharpness_map)
+  good_tiles = find_good_focus_tiles(tiles)
   rect = find_best_rect(tiles)
   rect_large = larger_rect(rect, 2, small_w, small_h)
   centroid = compute_centroid(sharpness_map, rect)
@@ -1419,15 +1422,69 @@ def compute_focus_grabcut(image):
     small_h = round(small_h * base_scale)
     small_image = cv2.resize(image, (small_w, small_h), interpolation=cv2.INTER_AREA)
     centroid_rect = [round(x * base_scale) for x in centroid_rect]
+    rect_large = [round(x * base_scale) for x in rect_large]
+    good_tiles = [(s, round(x * base_scale), round(y * base_scale),
+                   round(w * base_scale), round(h * base_scale))
+                  for s, x, y, w, h in good_tiles]
+  else:
+    small_image = image
   byte_image = (np.clip(small_image * 255, 0, 255)).astype(np.uint8)
-  bgd_model = np.zeros((1, 65), np.float64)
-  fgd_model = np.zeros((1, 65), np.float64)
-  mask = np.zeros((small_h, small_w), np.uint8)
-  x, y, rw, rh = centroid_rect
-  cv2.grabCut(byte_image, mask, (x, y, rw, rh), bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
-  mask_binary = np.where(
-    (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1.0, 0.0).astype(np.float32)
-  mask_soft = cv2.GaussianBlur(mask_binary, (11, 11), 0)
+  all_masks = []
+  total_weight = 0.0
+  def run_grabcut_with_rect(rect, definite_background=False):
+    mask = np.zeros((small_h, small_w), np.uint8)
+    if definite_background:
+      mask[:, :] = cv2.GC_BGD
+      x, y, rw, rh = rect
+      mask[y:y+rh, x:x+rw] = cv2.GC_PR_FGD
+      mode = cv2.GC_INIT_WITH_MASK
+      rect_arg = None
+    else:
+      x, y, rw, rh = rect
+      mode = cv2.GC_INIT_WITH_RECT
+      rect_arg = (x, y, rw, rh)
+    bgd_model = np.zeros((1, 65), np.float64)
+    fgd_model = np.zeros((1, 65), np.float64)
+    cv2.grabCut(byte_image, mask, rect_arg, bgd_model, fgd_model, 5, mode)
+    mask_binary = np.where((mask == cv2.GC_FGD) |
+                           (mask == cv2.GC_PR_FGD), 1.0, 0.0).astype(np.float32)
+    return mask_binary
+  def run_grabcut_with_tiles(tile_list, definite_background=False):
+    mask = (np.full((small_h, small_w), cv2.GC_BGD, np.uint8)
+            if definite_background else np.full((small_h, small_w), cv2.GC_PR_BGD, np.uint8))
+    for s, x, y, tw, th in tile_list:
+      mask[y:y+th, x:x+tw] = cv2.GC_PR_FGD if not definite_background else cv2.GC_FGD
+    bgd_model = np.zeros((1, 65), np.float64)
+    fgd_model = np.zeros((1, 65), np.float64)
+    cv2.grabCut(byte_image, mask, None, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_MASK)
+    mask_binary = np.where((mask == cv2.GC_FGD) |
+                           (mask == cv2.GC_PR_FGD), 1.0, 0.0).astype(np.float32)
+    return mask_binary
+  if rect_closed > 0:
+    all_masks.append((rect_closed, run_grabcut_with_rect(centroid_rect, definite_background=True)))
+    total_weight += rect_closed
+  if rect_open > 0:
+    all_masks.append((rect_open, run_grabcut_with_rect(rect_large, definite_background=False)))
+    total_weight += rect_open
+  if tiles_closed > 0:
+    all_masks.append((tiles_closed, run_grabcut_with_tiles(good_tiles, definite_background=True)))
+    total_weight += tiles_closed
+  if tiles_open > 0:
+    all_masks.append((tiles_open, run_grabcut_with_tiles(good_tiles, definite_background=False)))
+    total_weight += tiles_open
+  if total_weight == 0:
+    return np.zeros((h, w), np.float32)
+  combined = np.zeros((small_h, small_w), np.float32)
+  if use_rms:
+    numerator = np.zeros((small_h, small_w), np.float32)
+    for weight, mask in all_masks:
+      numerator += weight * (mask ** 2)
+    combined = np.sqrt(numerator / (total_weight + 1e-8))
+  else:
+    for weight, mask in all_masks:
+      combined += weight * mask
+    combined /= total_weight
+  mask_soft = cv2.GaussianBlur(combined, (11, 11), 0)
   mask_fullsize = cv2.resize(mask_soft, (w, h), interpolation=cv2.INTER_LINEAR)
   return np.clip(mask_fullsize, 0, 1)
 
@@ -1836,7 +1893,7 @@ def convert_grayscale_image(image, name):
     rect = find_best_rect(tiles)
     rect_large = larger_rect(rect, 2, w, h)
     centroid = compute_centroid(gray_image, rect)
-    centroid_rect = center_rect(rect_large, centroid, 0.1)
+    centroid_rect = center_rect(rect_large, centroid, 0.5)
     color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     color_image = draw_rectangle(color_image, *rect, 0, (1, 0, 0))
     color_image = draw_rectangle(color_image, *rect_large, 0, (0, 0, 1))
@@ -1849,13 +1906,23 @@ def convert_grayscale_image(image, name):
   elif name in ["grabcut"]:
     gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
     gray_image = normalize_edge_image(gray_image)
-    grabcut = compute_focus_grabcut(image)
     color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    overlay = np.zeros_like(color_image)
-    overlay[:, :, 2] = 1.0
-    alpha = grabcut[..., np.newaxis] * 0.5
-    color_image = (1 - alpha) * color_image + alpha * overlay
-    return np.clip(color_image, 0, 1)
+    confs = [
+      ("rect_closed", (0.5, 0, 0)),
+      ("rect_open",   (0.5, 0, 0)),
+      ("tiles_closed",(0, 0, 0.5)),
+      ("tiles_open",  (0, 0, 0.5)),
+    ]
+    overlay = np.zeros_like(color_image, dtype=np.float32)
+    for name_mode, color in confs:
+      kwargs = {"rect_closed": 0.0, "rect_open": 0.0, "tiles_closed": 0.0, "tiles_open": 0.0}
+      kwargs[name_mode] = 1.0
+      mask = compute_focus_grabcut(image, **kwargs)
+      color_bgr = (color[2], color[1], color[0])
+      for c in range(3):
+        overlay[..., c] += mask * color_bgr[c]
+    final = 0.5 * color_image + 0.5 * overlay
+    return np.clip(final, 0, 1)
   raise ValueError(f"Unknown grayscale name: {name}")
 
 
