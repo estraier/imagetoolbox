@@ -29,7 +29,7 @@ from itb_stack import (
   apply_global_histeq_image, apply_clahe_image,
   saturate_colors_image, apply_artistic_filter_image, convert_grayscale_image,
   bilateral_denoise_image, blur_image_gaussian, blur_image_pyramid, unsharp_image_gaussian,
-  perspective_correct_image, trim_image, scale_image, write_caption,
+  perspective_correct_image, trim_image, scale_image, apply_vignetting_image, write_caption,
 )
 
 
@@ -420,6 +420,15 @@ class TestItbStack(unittest.TestCase):
   def test_scale_image(self):
     image = generate_test_image()
     processed = scale_image(image, 200, 200)
+    self.assertEqual(processed.shape[2], image.shape[2])
+    processed = scale_image(image, 800, 800)
+    self.assertEqual(processed.shape[2], image.shape[2])
+
+  def test_apply_vignetting_image(self):
+    image = generate_test_image()
+    processed = apply_vignetting_image(image, 0.5, 0.2, 0.3)
+    self.assertEqual(processed.shape[2], image.shape[2])
+    processed = apply_vignetting_image(image, -0.5, 0.7, 0.8)
     self.assertEqual(processed.shape[2], image.shape[2])
 
   def test_write_caption(self):

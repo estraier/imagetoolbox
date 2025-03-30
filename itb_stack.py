@@ -2474,6 +2474,26 @@ def scale_image(image, width, height):
   return cv2.resize(image, (width, height), interpolation=interpolation)
 
 
+def apply_vignetting_image(image, strength, cx=0.5, cy=0.5):
+  """Apply radial vignetting to the image."""
+  assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  y, x = np.ogrid[:h, :w]
+  center_x = cx * w
+  center_y = cy * h
+  dx = (x - center_x) / (w / 2)
+  dy = (y - center_y) / (h / 2)
+  distance = np.sqrt(dx**2 + dy**2)
+  mask = 1 - np.abs(strength) * (distance**2)
+  mask = np.clip(mask, 0, 1).astype(np.float32)
+  if strength >= 0:
+    image = image * mask[..., np.newaxis]
+  else:
+    correction = 1 / np.clip(mask, 1e-6, 1)
+    image = image * correction[..., np.newaxis]
+  return np.clip(image, 0, 1)
+
+
 def parse_color_expr(expr):
   """Parses a color expression and returns a R, G, B tuple."""
   expr = expr.strip().lower()
@@ -2700,10 +2720,10 @@ def make_ap_args():
   ap.add_argument("--slog", type=float, default=0, metavar="num",
                   help="scaled log brightness adjustment."
                   " positive to lighten, negative to darken")
-  ap.add_argument("--sigmoid", type=str, default="0", metavar="num",
+  ap.add_argument("--sigmoid", default="0", metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
-  ap.add_argument("--histeq", type=str, default="0", metavar="num",
+  ap.add_argument("--histeq", default="0", metavar="num",
                   help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--saturate", type=float, default=0, metavar="num",
                   help="saturate colors. positive for vivid, negative for muted")
@@ -2714,9 +2734,9 @@ def make_ap_args():
                   " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel")
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
                   help="apply bilateral denoise by the pixel radius.")
-  ap.add_argument("--blur", type=str, default="0", metavar="num",
+  ap.add_argument("--blur", default="0", metavar="num",
                   help="apply Gaussian blur by the pixel radius. negative uses pyramid blur")
-  ap.add_argument("--portrait", type=str, default="0", metavar="num",
+  ap.add_argument("--portrait", default="0", metavar="num",
                   help="apply portrait blur by the pyramid level")
   ap.add_argument("--unsharp", type=int, default=0, metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
@@ -2727,6 +2747,8 @@ def make_ap_args():
                   " eg. 10,10,10,90,0,100,100,0")
   ap.add_argument("--scale", default="", metavar="numlist",
                   help="scale change: WIDTH,HEIGHT in pixels eg. 1920,1080")
+  ap.add_argument("--vignetting", default="0", metavar="num",
+                  help="apply vignetting by the light reduction ratio at the corners")
   ap.add_argument("--caption", default="", metavar="text",
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--input-video-fps", type=float, default=1, metavar="num",
@@ -2992,6 +3014,13 @@ def edit_image(image, args):
     if scale_params[1] is None:
       scale_params = get_scaled_image_size(image, scale_params[0])
     image = scale_image(image, *scale_params)
+  vignetting_params = parse_num_opts_expression(args.vignetting)
+  vignetting_num = vignetting_params["num"]
+  if vignetting_num != 0:
+    kwargs = {}
+    copy_param_to_kwargs(vignetting_params, kwargs, "cx", float)
+    copy_param_to_kwargs(vignetting_params, kwargs, "cy", float)
+    image = apply_vignetting_image(image, vignetting_num, **kwargs)
   if len(args.caption) > 0:
     logger.info(f"Writing the caption")
     image = write_caption(image, args.caption)

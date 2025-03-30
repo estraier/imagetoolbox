@@ -179,6 +179,7 @@ The workflow of this command is the following.
        --histeq to apply histgram equalization
        --denoise, --blur, --unsharp, --portrait to adjust noise/bokeh/sharpness
        --trim, --pers, --scale to change geometry
+       --vignetting, --caption to apply finishing touches
   8: The merged image is saved as a file.
 
 The following merging methods are supported.
