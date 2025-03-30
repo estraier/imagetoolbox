@@ -1927,6 +1927,18 @@ def convert_grayscale_image(image, name):
       tile_rect = tile[1:]
       color_image = draw_rectangle(color_image, *tile_rect, 2, (0, 0.5, 0.5))
     return np.clip(color_image, 0, 1)
+  elif name in ["labsharp"]:
+    sharp = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
+    sharp = percentile_normalization(sharp, 2, 98)
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l_norm = percentile_normalization(l, 2, 98)
+    sharp_norm = percentile_normalization(sharp, 2, 98)
+    chroma = np.sqrt(a ** 2 + b ** 2)
+    chroma_norm = percentile_normalization(chroma, 2, 98)
+    lcs_image = cv2.merge([l_norm, chroma_norm, sharp_norm])
+    color_image = convert_image_lcs2bgr(lcs_image)
+    return np.clip(color_image, 0, 1)
   elif name in ["grabcut"]:
     gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
     gray_image = normalize_edge_image(gray_image)
@@ -1950,19 +1962,26 @@ def convert_grayscale_image(image, name):
   raise ValueError(f"Unknown grayscale name: {name}")
 
 
-def larger_rect(rect, area_ratio, w, h):
-  """Compute a rectangle within the boundary."""
-  x, y, rw, rh = rect
-  cx = x + rw / 2
-  cy = y + rh / 2
-  scale = math.sqrt(area_ratio)
-  new_w = rw * scale
-  new_h = rh * scale
-  new_x = max(0, int(round(cx - new_w / 2)))
-  new_y = max(0, int(round(cy - new_h / 2)))
-  new_x2 = min(w, int(round(cx + new_w / 2)))
-  new_y2 = min(h, int(round(cy + new_h / 2)))
-  return new_x, new_y, new_x2 - new_x, new_y2 - new_y
+def convert_image_lcs2bgr(image):
+  """Convert LCS pseudo-color space to BGR."""
+  l, c, s = cv2.split(image)
+  h_red = np.full_like(l, 0)
+  l_red = l
+  s_red = s
+  hls_red = cv2.merge([h_red, l_red, s_red])
+  rgb_red = cv2.cvtColor(hls_red, cv2.COLOR_HLS2BGR)
+  h_blue = np.full_like(l, 200)
+  l_blue = l
+  s_blue = c
+  hls_blue = cv2.merge([h_blue, l_blue, s_blue])
+  rgb_blue = cv2.cvtColor(hls_blue, cv2.COLOR_HLS2BGR)
+  rgb_combined = (rgb_red + rgb_blue) / 2
+  hls_combined = cv2.cvtColor(rgb_combined, cv2.COLOR_BGR2HLS)
+  new_s = np.clip(((s_red ** 2 + s_blue ** 2) / 2) ** 0.5, 0, 1)
+  new_h, new_l, _ = cv2.split(hls_combined)
+  hls_combined = cv2.merge([new_h, new_l, new_s])
+  rgb_restored = cv2.cvtColor(hls_combined, cv2.COLOR_HLS2BGR)
+  return np.clip(rgb_restored, 0, 1)
 
 
 def center_rect(rect, center, area_ratio):
