@@ -66,14 +66,15 @@ input images.  If you calibrate brightness yourself, suppress the auto adjustmen
 
   $ itb_stack.py input*.jpg -o output.jpg -nr
 
-You can adjust brightness and contrast of the merged image manually.
+You can adjust brightness and contrast of the merged image manually.  If an option parameter
+starts with "-", use "=" as the separator.
 
   $ itb_stack.py input*.jpg -o output.jpg --slog 1.3 --sigmoid 2.4
+  $ itb_stack.py input*.jpg -o output.jpg --slog=-0.5 --sigmoid=-3.2
 
 You can adjust contrast of the merged image automatically using histogram equalization.  If the
 parameter is positive (from 0.1 to 10.0), advanced algorithm CLAHE is used.  If the parameter is
-negative, naive global algorithm is used.  If an option parameter starts with "-", use "=" as
-the separator.
+negative, naive global algorithm is used.
 
   $ itb_stack.py input*.jpg -o output.jpg --histeq 1.2
   $ itb_stack.py input*.jpg -o output.jpg --histeq=-1
