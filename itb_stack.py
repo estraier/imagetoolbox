@@ -1351,15 +1351,15 @@ def compute_sharpness(image, base_area=1000000, blur_radius=2,
   return np.clip(sharpness, -10, 10)
 
 
-def extract_mean_tiles(image, num_tiles=100, center_alpha=0.1):
+def extract_mean_tiles(image, num_tiles=100, attractor=(0.5, 0.5), attractor_weight=0.1):
   """Extracts tiles with stats from an image."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
   area = h * w
   tile_unit = max(round(math.sqrt(area) / math.sqrt(num_tiles)), 1)
   tile_size_max = int(tile_unit * 1.5)
-  cx = w / 2
-  cy = h / 2
+  cx = attractor[0] * w
+  cy = attractor[1] * h
   tiles = []
   x = 0
   while x < w:
@@ -1379,7 +1379,7 @@ def extract_mean_tiles(image, num_tiles=100, center_alpha=0.1):
       dx = (tile_cx - cx) / (w / 2)
       dy = (tile_cy - cy) / (h / 2)
       dist2_norm = dx * dx + dy * dy
-      weight = math.exp(-center_alpha * dist2_norm)
+      weight = math.exp(-attractor_weight * dist2_norm)
       tile_column.append((score * weight, x, y, tile_w, tile_h))
       y += tile_h
     tiles.append(tile_column)
@@ -1476,8 +1476,8 @@ def larger_rect(rect, area_ratio, w, h):
    return new_x, new_y, new_x2 - new_x, new_y2 - new_y
 
 
-def compute_focus_grabcut(image, rect_closed=1.0, rect_open=1.0,
-                          tiles_closed=1.0, tiles_open=1.0,
+def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
+                          rect_closed=1.0, rect_open=1.0, tiles_closed=1.0, tiles_open=1.0,
                           use_rms=True, sharpness_percentile=95):
   """Computes focus mask using multiple GrabCut strategies and blends them."""
   assert image.dtype == np.float32
@@ -1486,7 +1486,8 @@ def compute_focus_grabcut(image, rect_closed=1.0, rect_open=1.0,
                                     suppress_noise=0.9)
   sharpness_map = percentile_normalization(sharpness_map, 2, 98)
   small_h, small_w = sharpness_map.shape[:2]
-  tiles = extract_mean_tiles(sharpness_map)
+  tiles = extract_mean_tiles(
+    sharpness_map, attractor=attractor, attractor_weight=attractor_weight)
   good_tiles = find_good_focus_tiles(tiles)
   rect = find_best_rect(tiles)
   rect_large = larger_rect(rect, 2, small_w, small_h)
@@ -1991,7 +1992,11 @@ def convert_grayscale_image(image, expr):
     gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
     gray_image = normalize_edge_image(gray_image)
     h, w = gray_image.shape[:2]
-    tiles = extract_mean_tiles(gray_image)
+    kwargs = {}
+    copy_param_to_kwargs(params, kwargs, "attractor", parse_coordinate)
+    copy_param_to_kwargs(params, kwargs, "attractor_weight", float)
+    print(kwargs)
+    tiles = extract_mean_tiles(gray_image, **kwargs)
     rect = find_best_rect(tiles)
     rect_large = larger_rect(rect, 2, w, h)
     centroid = compute_centroid(gray_image, rect)
@@ -2024,6 +2029,8 @@ def convert_grayscale_image(image, expr):
     for name_mode, color in confs:
       kwargs = {"rect_closed": 0.0, "rect_open": 0.0, "tiles_closed": 0.0, "tiles_open": 0.0}
       kwargs[name_mode] = 1.0
+      copy_param_to_kwargs(params, kwargs, "attractor", parse_coordinate)
+      copy_param_to_kwargs(params, kwargs, "attractor_weight", float)
       mask = compute_focus_grabcut(image, **kwargs)
       color_bgr = (color[2], color[1], color[0])
       for c in range(3):
@@ -2213,30 +2220,6 @@ def compute_levels_blur_image_portrait(image):
   h, w = image.shape[:2]
   area_root = math.sqrt(h * w)
   return max(int(math.log2(area_root)) - 5, 2)
-
-
-def blur_image_portrait_stack(image, max_level, decay=0.0, contrast=1.0, edge_threshold=0.8,
-                              bokeh_balance=0.75):
-  """Applies portrait blur by stacked ECPB in an old way."""
-  results = []
-  for i in range(max_level):
-    results.append(blur_image_portrait_naive(image, i + 1, decay, contrast, edge_threshold))
-  def compute_geometric_weights():
-    scores = []
-    for level in range(1, max_level + 1):
-      bokeh_benefit = math.log2(level + 1)
-      artifact_cost = math.sqrt(level)
-      score = bokeh_balance * bokeh_benefit - (1 - bokeh_balance) * artifact_cost
-      scores.append(score)
-    scores = np.array(scores)
-    weights = np.exp(scores - np.max(scores))
-    return weights / np.sum(weights)
-  weights = compute_geometric_weights()
-  log_sum = np.zeros_like(results[0])
-  for r, w in zip(results, weights):
-    log_sum += w * np.log(np.clip(r, 1e-6, 1.0))
-  geo_mean = np.exp(log_sum)
-  return geo_mean;
 
 
 def blur_image_naive_ecpb(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.8):
@@ -2433,7 +2416,9 @@ def blur_image_stacked_ecpb(image, max_level, decay=0.0, contrast=1.0, edge_thre
 
 
 def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshold=0.8,
-                        bokeh_balance=0.75, repeat=1, grabcut=1.0, finish_edge=1.0):
+                        bokeh_balance=0.75, repeat=1,
+                        grabcut=1.0, attractor=(0.5, 0.5), attractor_weight=0.1,
+                        finish_edge=1.0):
   """Applies portrait blur according to the configuration."""
   blurred = image
   for i in range(repeat):
@@ -2447,7 +2432,8 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
         edge_threshold=edge_threshold)
   restored = blurred
   if grabcut > 0:
-    mask = compute_focus_grabcut(image) * grabcut
+    mask = compute_focus_grabcut(image, attractor=attractor, attractor_weight=attractor_weight)
+    mask *= grabcut
     restored = image * mask[..., None] + restored * (1 - mask[..., None])
   if finish_edge > 0:
     mask = compute_sharpness(image, base_area=sys.maxsize, blur_radius=0)
@@ -2625,7 +2611,15 @@ def write_caption(image, capexpr):
 
 def parse_name_opts_expression(expr):
   """Parses name:option expression and returns key-value map."""
-  fields = re.split(r'[ ,\|:;]+', expr.strip())
+  expr = expr.strip()
+  if re.match(r"^[a-zA-Z]+:", expr):
+    fields = re.split(":", expr)
+  elif re.match(r"^[a-zA-Z]+,", expr):
+    fields = re.split(",", expr)
+  elif re.match(r"^[a-zA-Z]+;", expr):
+    fields = re.split(";", expr)
+  else:
+    fields = re.split(r"[ ,\|:;]+", expr)
   params = {"name": fields[0]}
   for field in fields[1:]:
     columns = field.split("=", 1)
@@ -2639,7 +2633,15 @@ def parse_name_opts_expression(expr):
 
 def parse_num_opts_expression(expr, defval=0):
   """Parses num:option expression and returns key-value map."""
-  fields = re.split(r'[ ,\|:;]+', expr.strip())
+  expr = expr.strip()
+  if re.match(r"^[a-zA-Z]+:", expr):
+    fields = re.split(":", expr)
+  elif re.match(r"^[a-zA-Z]+,", expr):
+    fields = re.split(",", expr)
+  elif re.match(r"^[a-zA-Z]+;", expr):
+    fields = re.split(";", expr)
+  else:
+    fields = re.split(r"[ ,\|:;]+", expr)
   try:
     num = float(fields[0])
   except:
@@ -2664,6 +2666,20 @@ def copy_param_to_kwargs(params, kwargs, name, convert_type=None):
     elif type(convert_type) == bool:
       value = convert_type
     kwargs[name] = value
+
+
+def parse_coordinate(expr):
+  """Parses coordinate expression and returns XY ratios."""
+  expr = expr.strip()
+  if not expr:
+    return None
+  values = list(map(float, re.split(r'[ ,\|:;]+', expr.strip())))
+  values = [float(v) for v in values]
+  if len(values) == 2:
+    x, y = values[0], values[1]
+  else:
+    raise ValueError("coordinate expression must contain 2 values")
+  return x, y
 
 
 def parse_trim_expression(expr):
@@ -3067,6 +3083,8 @@ def edit_image(image, args):
     copy_param_to_kwargs(portrait_params, kwargs, "bokeh_balance", float)
     copy_param_to_kwargs(portrait_params, kwargs, "repeat", int)
     copy_param_to_kwargs(portrait_params, kwargs, "grabcut", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "attractor", parse_coordinate)
+    copy_param_to_kwargs(portrait_params, kwargs, "attractor_weight", float)
     copy_param_to_kwargs(portrait_params, kwargs, "finish_edge", float)
     logger.info(f"Applying portrait blur by {portrait_levels} levels")
     image = blur_image_portrait(image, portrait_levels, **kwargs)
