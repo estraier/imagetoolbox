@@ -1400,6 +1400,21 @@ def draw_rectangle(image, x, y, width, height, thickness=0, color=(0.5, 0.5, 0.5
   return image
 
 
+def larger_rect(rect, area_ratio, w, h):
+   """Compute a rectangle within the boundary."""
+   x, y, rw, rh = rect
+   cx = x + rw / 2
+   cy = y + rh / 2
+   scale = math.sqrt(area_ratio)
+   new_w = rw * scale
+   new_h = rh * scale
+   new_x = max(0, int(round(cx - new_w / 2)))
+   new_y = max(0, int(round(cy - new_h / 2)))
+   new_x2 = min(w, int(round(cx + new_w / 2)))
+   new_y2 = min(h, int(round(cy + new_h / 2)))
+   return new_x, new_y, new_x2 - new_x, new_y2 - new_y
+
+
 def compute_focus_grabcut(image, rect_closed=1.0, rect_open=1.0,
                           tiles_closed=1.0, tiles_open=1.0,
                           use_rms=True, sharpness_percentile=95):
@@ -1927,16 +1942,8 @@ def convert_grayscale_image(image, name):
       tile_rect = tile[1:]
       color_image = draw_rectangle(color_image, *tile_rect, 2, (0, 0.5, 0.5))
     return np.clip(color_image, 0, 1)
-  elif name in ["labsharp"]:
-    sharp = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
-    sharp = percentile_normalization(sharp, 2, 98)
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    l_norm = percentile_normalization(l, 2, 98)
-    sharp_norm = percentile_normalization(sharp, 2, 98)
-    chroma = np.sqrt(a ** 2 + b ** 2)
-    chroma_norm = percentile_normalization(chroma, 2, 98)
-    lcs_image = cv2.merge([l_norm, chroma_norm, sharp_norm])
+  elif name in ["lcs"]:
+    lcs_image = convert_image_bgr2lcs(image)
     color_image = convert_image_lcs2bgr(lcs_image)
     return np.clip(color_image, 0, 1)
   elif name in ["grabcut"]:
@@ -1962,8 +1969,24 @@ def convert_grayscale_image(image, name):
   raise ValueError(f"Unknown grayscale name: {name}")
 
 
+def convert_image_bgr2lcs(image):
+  """Convert BGR image into LCS pseudo-color space."""
+  assert image.dtype == np.float32
+  sharp = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
+  sharp = percentile_normalization(sharp, 2, 98)
+  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+  l, a, b = cv2.split(lab)
+  l_norm = percentile_normalization(l, 2, 98)
+  sharp_norm = percentile_normalization(sharp, 2, 98)
+  chroma = np.sqrt(a ** 2 + b ** 2)
+  chroma_norm = percentile_normalization(chroma, 2, 98)
+  lcs_image = cv2.merge([l_norm, chroma_norm, sharp_norm])
+  return np.clip(lcs_image, 0, 1)
+
+
 def convert_image_lcs2bgr(image):
-  """Convert LCS pseudo-color space to BGR."""
+  assert image.dtype == np.float32
+  """Convert LCS pseudo-color space into BGR."""
   l, c, s = cv2.split(image)
   h_red = np.full_like(l, 0)
   l_red = l
