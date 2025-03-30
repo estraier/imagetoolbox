@@ -399,7 +399,7 @@ def inverse_sigmoidal_contrast_image(image, gain, mid):
   return np.clip((naive_inverse_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
 
 
-def apply_sigmoid_image(image, gain, mid):
+def apply_sigmoid_image(image, gain, mid=0.5):
   """Adjust image brightness by a sigmoid transformation."""
   assert image.dtype == np.float32
   if gain > 1e-6:
@@ -1854,9 +1854,11 @@ def apply_artistic_filter_image(image, name):
   return image
 
 
-def convert_grayscale_image(image, name):
+def convert_grayscale_image(image, expr):
   """Converts the image into grayscale."""
   assert image.dtype == np.float32
+  params = parse_name_opts_expression(expr)
+  name = params["name"]
   confs = [(("bt601", "601", "gray"), (0.299, 0.587, 0.114)),
            (("bt709", "709"), (0.2126, 0.7152, 0.0722)),
            (("bt2020", "2020"), (0.2627, 0.6780, 0.0593)),
@@ -1943,8 +1945,9 @@ def convert_grayscale_image(image, name):
       color_image = draw_rectangle(color_image, *tile_rect, 2, (0, 0.5, 0.5))
     return np.clip(color_image, 0, 1)
   elif name in ["lcs"]:
-    lcs_image = convert_image_bgr2lcs(image)
-    color_image = convert_image_lcs2bgr(lcs_image)
+    color_image = convert_image_lcs(image)
+    if "tricolor" in params:
+      color_image = convert_image_lcs_tricolor(color_image)
     return np.clip(color_image, 0, 1)
   elif name in ["grabcut"]:
     gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
@@ -1964,12 +1967,12 @@ def convert_grayscale_image(image, name):
       color_bgr = (color[2], color[1], color[0])
       for c in range(3):
         overlay[..., c] += mask * color_bgr[c]
-    final = 0.5 * color_image + 0.5 * overlay
-    return np.clip(final, 0, 1)
+    color_image = 0.5 * color_image + 0.5 * overlay
+    return np.clip(color_image, 0, 1)
   raise ValueError(f"Unknown grayscale name: {name}")
 
 
-def convert_image_bgr2lcs(image):
+def convert_image_lcs(image):
   """Convert BGR image into LCS pseudo-color space."""
   assert image.dtype == np.float32
   sharp = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
@@ -1984,9 +1987,9 @@ def convert_image_bgr2lcs(image):
   return np.clip(lcs_image, 0, 1)
 
 
-def convert_image_lcs2bgr(image):
+def convert_image_lcs_tricolor(image):
   assert image.dtype == np.float32
-  """Convert LCS pseudo-color space into BGR."""
+  """Convert LCS pseudo-color space into tricolor BGR."""
   l, c, s = cv2.split(image)
   h_red = np.full_like(l, 0)
   l_red = l
@@ -2697,7 +2700,7 @@ def make_ap_args():
   ap.add_argument("--slog", type=float, default=0, metavar="num",
                   help="scaled log brightness adjustment."
                   " positive to lighten, negative to darken")
-  ap.add_argument("--sigmoid", type=float, default=0, metavar="num",
+  ap.add_argument("--sigmoid", type=str, default="0", metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
   ap.add_argument("--histeq", type=str, default="0", metavar="num",
@@ -2912,9 +2915,13 @@ def edit_image(image, args):
   if args.slog != 0:
     logger.info(f"Adjust brightness by a scaled log")
     image = apply_scaled_log_image(image, args.slog)
-  if args.sigmoid != 0:
+  sigmoid_params = parse_num_opts_expression(args.sigmoid)
+  sigmoid_num = sigmoid_params["num"]
+  if sigmoid_num != 0:
     logger.info(f"Adjust brightness by a sigmoid")
-    image = apply_sigmoid_image(image, args.sigmoid, 0.5)
+    kwargs = {}
+    copy_param_to_kwargs(sigmoid_params, kwargs, "mid", float)
+    image = apply_sigmoid_image(image, sigmoid_num, **kwargs)
   histeq_params = parse_num_opts_expression(args.histeq)
   histeq_num = histeq_params["num"]
   if histeq_num > 0:
