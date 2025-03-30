@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+import contextlib
 import logging
+import io
 import os
 import sys
 import unittest
@@ -14,8 +16,8 @@ import cv2
 
 
 from itb_stack import (
-  set_logging_level,
-  show_image, load_image, save_image, load_video, save_video,
+  main, set_logging_level,
+  generate_colorbar, show_image, load_image, save_image, load_video, save_video,
   compute_brightness, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   adjust_white_balance_image, adjust_exposure_image,
   align_images_orb, align_images_sift, align_images_ecc,
@@ -429,9 +431,87 @@ class TestItbStack(unittest.TestCase):
     self.assertEqual(processed.shape, image.shape)
 
   def test_run_command_help(self):
-    image = generate_test_image()
-    processed = write_caption(image, "hello|2|f0f|T")
-    self.assertEqual(processed.shape, image.shape)
+    saved_argv = sys.argv.copy()
+    sys.argv = ["itb_stack.py", "--help"]
+    f = io.StringIO()
+    with contextlib.redirect_stdout(f), self.assertRaises(SystemExit) as cm:
+      main()
+    output = f.getvalue()
+    self.assertIn("usage", output.lower())
+    self.assertEqual(cm.exception.code, 0)
+    sys.argv = saved_argv
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_simple(self):
+    sys.argv[:] = ["itb_stack.py", "--help"]
+    f = io.StringIO()
+    with contextlib.redirect_stdout(f), self.assertRaises(SystemExit) as cm:
+      main()
+    output = f.getvalue()
+    self.assertIn("usage", output.lower())
+    self.assertEqual(cm.exception.code, 0)
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_simple(self):
+    file1_path = os.path.join(self.temp_path, "output1.tif")
+    file2_path = os.path.join(self.temp_path, "output2.jpg")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "--output", file1_path]
+    main()
+    self.assertTrue(os.path.exists(file1_path))
+    sys.argv[:] = ["itb_stack.py", file1_path, "--output", file2_path]
+    main()
+    self.assertTrue(os.path.exists(file2_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_merge_average(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--merge", "average"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_merge_stf(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--average-exposure", "--align", "orb", "--merge", "weighted"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_merge_hdr(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--align", "sift:nfeatures=10000:denoise=3:shift_limit=0.05",
+                   "--merge", "debevec", "--tonemap", "reinhard"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_merge_denoise(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--align", "s", "--merge", "denoise:clip_limit=0.5:blur_radius=4"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_merge_focus(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--align", "ecc:use_affine:denoise=3",
+                   "--merge", "focus"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_merge_grid(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--merge", "grid:columns=2:margin=2:background=#282"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
 
 if __name__ == "__main__":
   if "-v" in sys.argv:

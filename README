@@ -49,7 +49,7 @@ If bracketing is done handheld without a tripod, pictures will be shifted a litt
 causes blur after merging.  In that case, aligning input images is useful.  In most cases, the
 ORB aligner is fast and good enough.
 
-  $ itb_stack.py input*.jpg -o output.jpg -ax -m w -a o
+  $ itb_stack.py input*.jpg -o output.jpg -ax -a o -m w
 
 To create an HDR (high dynamic range) image from images taken by exposure bracketing, run the
 following command.  It merges input images by Debevec's method and applies tone mapping by
@@ -59,7 +59,7 @@ Reinhard's method.
 
 Alignment is also useful for creating HDR images of handheld pictures.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a o
+  $ itb_stack.py input*.jpg -o output.jpg -a o -m d -t r
 
 By default, brightness of the merged image is calibrated to match the average brightness of the
 input images.  If you calibrate brightness yourself, suppress the auto adjustment.
@@ -82,16 +82,16 @@ negative, naive global algorithm is used.
 Merging multiple pictures taken with high sensitivity is effective in suppressing noise.  Whereas
 median composition is widely used, the "denoise" mode provides better results in most cases.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m denoise -a o
+  $ itb_stack.py input*.jpg -o output.jpg -a o -m denoise
 
 If image alignment failures, ignoring unaligned images from merging is a practical solution.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m denoise -a o -iu
+  $ itb_stack.py input*.jpg -o output.jpg -a o -iu -m denoise
 
 Focus stacking of images taken with different focus distance is also supported.  In this case,
 using ECC aligner is sometimes better than SIFT.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m f -nr -a e
+  $ itb_stack.py input*.jpg -o output.jpg -a e -m f
 
 Putting images in a grid is also supported.  You specify the number of columns.
 
@@ -99,7 +99,7 @@ Putting images in a grid is also supported.  You specify the number of columns.
 
 Stitching images as a panoramic image is also supported.  "-fm" fills the black margin.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m s -nr -fm
+  $ itb_stack.py input*.jpg -o output.jpg -m s -fm
 
 You can trim and scale the merged image.  For trimming, you set percentages for each edge like
 margin spec in CSS (top,right,bottom,left).  For scaling, you set both the width and height, or
@@ -217,18 +217,18 @@ The following aligning methods are supported.
 In summary, to create a pseudo-STF image, averaging exposure and weighted average composition
 produces the best results in most cases.
 
-  $ itb_stack.py input*.jpg -o output.jpg -ax -m w -a o
+  $ itb_stack.py input*.jpg -o output.jpg -ax -a o -m w
 
 To create an HDR image, combining the Debevec and Robertson methods produces the best results in
 most cases.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m d -t r -a o
+  $ itb_stack.py input*.jpg -o output.jpg -a o -m d -t r
 
 The focus stacking algorithm uses softmax of local contrast for composition weight.  It is an
 interesting fact that this algorithm is useful to create HDR images.  Averaging exposure and
 applying focus stacking produces contrasty and natural images.
 
-  $ itb_stack.py input*.jpg -o output.jpg -ax -m f -a o
+  $ itb_stack.py input*.jpg -o output.jpg -ax -a o -m f
 
 To reduce the effect of camera shake during a bracketing shoot, utilizing an alignment method is
 recommended.  Usually ORB is enough as in the above examples.  However, each method has
@@ -246,8 +246,8 @@ The "denoise" merging mode utilizes BGMbM (blurred geometric mean-based median) 
 multiplicative noises in low-contrast area are selectively suppressed.  The effect can be
 calibrated by options.  clip_limit=0.4 and blur_radius=3 are default values.
 
-  $ itb_stack.py input*.jpg -o output.jpg -m denoise -a o:clip_limit=0.25              # sharper
-  $ itb_stack.py input*.jpg -o output.jpg -m denoise -a o:clip_limit=0.5:blur_radius=4 # softer
+  $ itb_stack.py input*.jpg -o output.jpg -a o -m denoise:clip_limit=0.25               # sharper
+  $ itb_stack.py input*.jpg -o output.jpg -a o -m denoise:clip_limit=0.5:blur_radius=4  # softer
 
 For unit testing, run the following command.
 

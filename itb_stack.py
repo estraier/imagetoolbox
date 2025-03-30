@@ -62,6 +62,55 @@ def has_command(name):
   return bool(shutil.which(name))
 
 
+def generate_colorbar(width=640, height=480):
+  """Generates an image of ARIB-like color bar."""
+  img = np.zeros((height, width, 3), dtype=np.uint8)
+  h1 = int(height * 0.60)
+  h2 = int(height * 0.10)
+  h3 = int(height * 0.10)
+  h4 = height - (h1 + h2 + h3)
+  top_colors = [
+    (102, 102, 102),
+    (192, 192, 192),
+    (0, 255, 255),
+    (255, 255, 0),
+    (0, 255, 0),
+    (255, 0, 255),
+    (0, 0, 255),
+    (255, 0, 0),
+    (102, 102, 102),
+  ]
+  bar_width = width // len(top_colors)
+  for i, color in enumerate(top_colors):
+    img[0:h1, i*bar_width:(i+1)*bar_width] = color
+  cyan_x = 0
+  cyan_w = bar_width
+  brown_w = bar_width
+  brown_x = cyan_x + cyan_w
+  blue_x = width - bar_width
+  white_x = brown_x + brown_w
+  white_w = width - cyan_w - brown_w - bar_width
+  img[h1:h1+h2, cyan_x:cyan_x+cyan_w] = (255, 255, 0)
+  img[h1:h1+h2, brown_x:brown_x+brown_w] = (42, 42, 165)
+  img[h1:h1+h2, white_x:white_x+white_w] = (192, 192, 192)
+  img[h1:h1+h2, blue_x:blue_x+bar_width] = (255, 0, 0)
+  yellow_x = 0
+  yellow_w = bar_width
+  red_x = width - bar_width
+  ramp_x = yellow_x + yellow_w
+  ramp_w = width - yellow_w - bar_width
+  img[h1+h2:h1+h2+h3, yellow_x:yellow_x+yellow_w] = (0, 255, 255)
+  img[h1+h2:h1+h2+h3, red_x:red_x+bar_width] = (0, 0, 255)
+  for i in range(ramp_w):
+    val = int(i / ramp_w * 255)
+    img[h1+h2:h1+h2+h3, ramp_x + i] = (val, val, val)
+  gray_values = [255, 192, 128, 64, 38, 15, 0]
+  block_w = width // len(gray_values)
+  for i, val in enumerate(gray_values):
+    img[h1+h2+h3:, i*block_w:(i+1)*block_w] = (val, val, val)
+  return img.astype(np.float32) / 255
+
+
 def show_image(image, title="show_image"):
   """Shows an image in the window."""
   image = image.astype(np.float32)
@@ -2829,7 +2878,7 @@ def main():
     logger.info(f"Aligning images by Hugin")
     images = align_images_hugin(images, args.inputs, bits_list)
   else:
-    raise ValueError(f"Unknown align method")
+    raise ValueError(f"Unknown align method: f{align_name}")
   if len(aligned_indices) > 0:
     logger.debug(f"aligned indices: {sorted(list(aligned_indices))}")
     if args.ignore_unaligned:
@@ -2861,7 +2910,19 @@ def load_input_images(args):
   for input_path in args.inputs:
     ext = os.path.splitext(input_path)[1].lower()
     mem_allowance = limit_mem_size - total_mem_size
-    if ext in EXTS_NPZ:
+    match = re.fullmatch(r"\[([a-z]+?)(:.*)?\]", input_path)
+    if match:
+      name = match.group(1).lower()
+      if name == "colorbar":
+        image = generate_colorbar()
+        bits = 8
+      else:
+        raise ValueError(f"Unsupported image generation: {name}")
+      total_mem_size += estimate_image_memory_size(image)
+      if total_mem_size > limit_mem_size:
+        raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
+      images_data.append((image, bits))
+    elif ext in EXTS_NPZ:
       npz_image_data = load_npz(input_path, mem_allowance)
       for image, bits in npz_image_data:
         total_mem_size += estimate_image_memory_size(image)
@@ -3098,7 +3159,6 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     copy_param_to_kwargs(merge_params, kwargs, "smoothness", float)
     copy_param_to_kwargs(merge_params, kwargs, "pyramid_levels", float)
     merged_image = merge_images_focus_stacking(images, **kwargs)
-    be_adjusted = len(images) > 1
   elif merge_name in ["grid", "g"]:
     logger.info(f"Merging images in a grid")
     kwargs = {}
@@ -3110,7 +3170,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
     logger.info(f"Stitching images as a panoramic photo")
     merged_image = merge_images_stitch(images)
   else:
-    raise ValueError(f"Unknown merge method")
+    raise ValueError(f"Unknown merge method: {merge_name}")
   if logger.isEnabledFor(logging.DEBUG):
     log_image_stats(merged_image, "merged")
   merged_image = fix_overflown_image(merged_image)
@@ -3128,7 +3188,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
       logger.info(f"Tone mapping images by Mantiuk's method")
       merged_image = tone_map_image_mantiuk(merged_image)
     else:
-      raise ValueError(f"Unknown tone method")
+      raise ValueError(f"Unknown tone method: {args.tonemap}")
     if logger.isEnabledFor(logging.DEBUG):
       log_image_stats(merged_image, "tonemapped")
     merged_image = fix_overflown_image(merged_image)
