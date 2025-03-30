@@ -15,7 +15,7 @@ import cv2
 
 from itb_stack import (
   set_logging_level,
-  load_image, save_image, load_video, save_video,
+  show_image, load_image, save_image, load_video, save_video,
   compute_brightness, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   adjust_white_balance_image, adjust_exposure_image,
   align_images_orb, align_images_sift, align_images_ecc,
@@ -64,14 +64,6 @@ def generate_test_image(width=1000, height=1000, shift=(0, 0)):
 def show_test_image():
   image = generate_test_image()
   show_image(image)
-
-
-def show_image(image):
-  import matplotlib.pyplot as plt
-  image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-  plt.imshow(image_rgb)
-  plt.axis("off")
-  plt.show()
 
 
 def split_image_vertically(image):

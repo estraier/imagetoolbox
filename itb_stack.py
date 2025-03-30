@@ -62,6 +62,18 @@ def has_command(name):
   return bool(shutil.which(name))
 
 
+def show_image(image, title="show_image"):
+  """Shows an image in the window."""
+  image = image.astype(np.float32)
+  if image.dtype == np.uint8:
+    image = image / 255
+  if len(image.shape) == 2:
+    image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+  cv2.imshow(title, image)
+  cv2.waitKey(0)
+  cv2.destroyAllWindows()
+
+
 def normalize_input_image(image):
   """Normalizes the input image as linear RGB data in BGR space."""
   if image.dtype == np.uint32:
