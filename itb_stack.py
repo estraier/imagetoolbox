@@ -1486,10 +1486,19 @@ def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
                                     suppress_noise=0.9)
   sharpness_map = percentile_normalization(sharpness_map, 2, 98)
   small_h, small_w = sharpness_map.shape[:2]
-  tiles = extract_mean_tiles(
-    sharpness_map, attractor=attractor, attractor_weight=attractor_weight)
-  good_tiles = find_good_focus_tiles(tiles)
-  rect = find_best_rect(tiles)
+  if attractor_weight < 0:
+    unit_size = (small_w * small_h) ** 0.5
+    rect_w = int(unit_size // 4)
+    rect_h = int(unit_size // 4)
+    rect = (round(attractor[0] * small_w) - rect_w // 2,
+            round(attractor[1] * small_h) - rect_h // 2,
+            rect_w, rect_h)
+    good_tiles = []
+  else:
+    tiles = extract_mean_tiles(
+      sharpness_map, attractor=attractor, attractor_weight=attractor_weight)
+    rect = find_best_rect(tiles)
+    good_tiles = find_good_focus_tiles(tiles)
   rect_large = larger_rect(rect, 2, small_w, small_h)
   centroid = compute_centroid(sharpness_map, rect)
   centroid_rect = center_rect(rect_large, centroid, 0.5)
@@ -1553,22 +1562,22 @@ def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
       return weight
     penalty = 1.0 - (fg_ratio - threshold) / (1.0 - threshold)
     return weight * penalty
-  if rect_closed > 0:
+  if rect_closed > 0 and rect:
     mask = run_grabcut_with_rect(centroid_rect, definite_background=True)
     weight = apply_area_penalty(rect_closed, mask)
     all_masks.append((weight, mask))
     total_weight += weight
-  if rect_open > 0:
+  if rect_open > 0 and rect:
     mask = run_grabcut_with_rect(rect_large, definite_background=False)
     weight = apply_area_penalty(rect_open, mask)
     all_masks.append((weight, mask))
     total_weight += weight
-  if tiles_closed > 0:
+  if tiles_closed > 0 and good_tiles:
     mask = run_grabcut_with_tiles(good_tiles, definite_background=True)
     weight = apply_area_penalty(tiles_closed, mask)
     all_masks.append((weight, mask))
     total_weight += weight
-  if tiles_open > 0:
+  if tiles_open > 0 and good_tiles:
     mask = run_grabcut_with_tiles(good_tiles, definite_background=False)
     weight = apply_area_penalty(tiles_open, mask)
     all_masks.append((weight, mask))
@@ -1992,12 +2001,22 @@ def convert_grayscale_image(image, expr):
     gray_image = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
     gray_image = normalize_edge_image(gray_image)
     h, w = gray_image.shape[:2]
-    kwargs = {}
-    copy_param_to_kwargs(params, kwargs, "attractor", parse_coordinate)
-    copy_param_to_kwargs(params, kwargs, "attractor_weight", float)
-    print(kwargs)
-    tiles = extract_mean_tiles(gray_image, **kwargs)
-    rect = find_best_rect(tiles)
+    attractor = parse_coordinate(params.get("attractor") or "0.5,0.5")
+    attractor_weight = float(params.get("attractor_weight") or "0")
+    if float(attractor_weight) < 0:
+      tiles = []
+      unit_size = (w * h) ** 0.5
+      rect_w = int(unit_size // 4)
+      rect_h = int(unit_size // 4)
+      rect = (round(attractor[0] * w) - rect_w // 2, round(attractor[1] * h) - rect_h // 2,
+              rect_w, rect_h)
+    else:
+      kwargs = {}
+      copy_param_to_kwargs(params, kwargs, "attractor", parse_coordinate)
+      copy_param_to_kwargs(params, kwargs, "attractor_weight", float)
+      tiles = extract_mean_tiles(gray_image, **kwargs)
+      rect = find_best_rect(tiles)
+
     rect_large = larger_rect(rect, 2, w, h)
     centroid = compute_centroid(gray_image, rect)
     centroid_rect = center_rect(rect_large, centroid, 0.5)
@@ -2219,7 +2238,7 @@ def compute_levels_blur_image_portrait(image):
   """Computes a decent level for blur_image_portrait."""
   h, w = image.shape[:2]
   area_root = math.sqrt(h * w)
-  return max(int(math.log2(area_root)) - 5, 2)
+  return max(int(math.log2(area_root)) - 6, 2)
 
 
 def blur_image_naive_ecpb(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.8):
