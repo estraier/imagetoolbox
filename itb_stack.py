@@ -1483,7 +1483,7 @@ def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
   assert image.dtype == np.float32
   h, w = image.shape[:2]
   sharpness_map = compute_sharpness(
-    image, blur_radius=1, high_low_balance=0.9, suppress_noise=0.9)
+    image, high_low_balance=0.9, suppress_noise=0.9)
   sharpness_map = percentile_normalization(sharpness_map, 2, 98)
   small_h, small_w = sharpness_map.shape[:2]
   if attractor_weight < 0:
@@ -1999,7 +1999,7 @@ def convert_grayscale_image(image, expr):
     return np.clip(gray_image, 0, 1)
   elif name in ["focus"]:
     gray_image = compute_sharpness(
-      image, blur_radius=1, high_low_balance=0.9, suppress_noise=0.9)
+      image, high_low_balance=0.9, suppress_noise=0.9)
     gray_image = normalize_edge_image(gray_image)
     h, w = gray_image.shape[:2]
     attractor = parse_coordinate(params.get("attractor") or "0.5,0.5")
@@ -2037,7 +2037,7 @@ def convert_grayscale_image(image, expr):
     return np.clip(color_image, 0, 1)
   elif name in ["grabcut"]:
     gray_image = compute_sharpness(
-      image, blur_radius=1, high_low_balance=0.9, suppress_noise=0.9)
+      image, high_low_balance=0.9, suppress_noise=0.9)
     gray_image = normalize_edge_image(gray_image)
     color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     confs = [
@@ -2064,7 +2064,7 @@ def convert_grayscale_image(image, expr):
 def convert_image_lcs(image):
   """Convert BGR image into LCS pseudo-color space."""
   assert image.dtype == np.float32
-  sharp = compute_sharpness(image, blur_radius=1, high_low_balance=0.9, suppress_noise=0.9)
+  sharp = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
   sharp = percentile_normalization(sharp, 2, 98)
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
