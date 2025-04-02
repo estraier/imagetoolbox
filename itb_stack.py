@@ -796,7 +796,7 @@ def log_homography_matrix(m):
 
 
 def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
-  """Make a byte-gray enhanced image for alignment."""
+  """Make a byte-gray enhanced gray image for alignment."""
   assert image.dtype == np.float32
   gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
   if denoise > 0:
@@ -805,8 +805,8 @@ def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
     sigma_space = 10 * math.sqrt(ksize)
     gray_image = cv2.bilateralFilter(gray_image, denoise, sigma_color, sigma_space)
   byte_image = (np.clip(gray_image, 0, 1) * 255).astype(np.uint8)
-  tile_grid_size = (8, 8)
   if clahe_clip_limit > 0:
+    tile_grid_size = (8, 8)
     clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=tile_grid_size)
     byte_image = clahe.apply(byte_image)
   return np.clip(byte_image, 0, 255)
@@ -1288,9 +1288,10 @@ def percentile_normalization(image, low=1, high=99):
   return np.clip(image, 0, 1)
 
 
-def estimate_white_noise_level(gray_img, num_tiles=400, percentile=10):
-  """Estimate white noise level for Laplacian."""
-  lap = np.abs(cv2.Laplacian(gray_img, cv2.CV_32F, ksize=3))
+def estimate_white_noise_level(image, num_tiles=400, percentile=10):
+  """Estimates white noise level for Laplacian."""
+  assert image.dtype == np.float32
+  lap = np.abs(cv2.Laplacian(image, cv2.CV_32F, ksize=3))
   h, w = lap.shape
   area = h * w
   tile_unit = max(round(math.sqrt(area) / math.sqrt(num_tiles)), 1)
@@ -1319,11 +1320,68 @@ def estimate_white_noise_level(gray_img, num_tiles=400, percentile=10):
   return float(np.mean(lowest_k))
 
 
-def compute_sharpness(image, base_area=1000000, blur_radius=2,
-                      rescale=True, high_low_balance=0.5, suppress_noise=0.5):
+def estimate_foreground_isolation(image, num_tiles=100):
+  """Estimate how easily the foreground can be isolated from the background."""
+  assert image.dtype == np.float32
+  h, w = image.shape
+  area = h * w
+  tile_unit = max(round(math.sqrt(area) / math.sqrt(num_tiles)), 1)
+  tile_size_max = int(tile_unit * 1.5)
+  tile_means = []
+  x = 0
+  while x < w:
+    tile_w = tile_unit
+    if x + tile_size_max >= w:
+      tile_w = w - x
+    y = 0
+    while y < h:
+      tile_h = tile_unit
+      if y + tile_size_max >= h:
+        tile_h = h - y
+      tile = image[y:y+tile_h, x:x+tile_w]
+      if tile.size > 0:
+        tile_means.append(np.mean(tile))
+      y += tile_h
+    x += tile_w
+  if not tile_means:
+    return 0.0
+  values = np.array(tile_means)
+  values = values[values >= 0]
+  values = np.sort(values + 1e-10)
+  n = len(values)
+  index = np.arange(1, n + 1)
+  gini = ((2 * np.sum(index * values)) / (n * np.sum(values))) - (n + 1) / n
+  return float(np.clip(gini, 0.0, 1.0))
+
+
+def make_image_for_sharpness_map(image, clahe_clip_limit=0.5):
+  """Make a float32 enhanced gray image for sharpness map."""
+  assert image.dtype == np.float32
+  gamma = 2.2
+  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+  l, a, b = cv2.split(lab)
+  l = np.power(l / 100, 1 / gamma) * 255
+  byte_l = (l).astype(np.uint8)
+  undo_bytes = byte_l.astype(np.float32)
+  float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
+  tile_grid_size = (8, 8)
+  clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=tile_grid_size)
+  new_l = clahe.apply(byte_l).astype(np.float32)
+  new_l = np.power(new_l / 255, gamma) * 100
+  corrected = new_l / np.maximum(float_ratio, 1e-6)
+  corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
+  new_l = np.clip(corrected, 0, 100)
+  lab = cv2.merge((new_l, a, b))
+  gray_image = cv2.cvtColor(cv2.cvtColor(lab, cv2.COLOR_LAB2BGR), cv2.COLOR_BGR2GRAY)
+  return gray_image
+
+
+def compute_sharpness_naive(
+    image, base_area=1000000, blur_radius=2,
+    rescale=True, clahe_clip_limit=0.5, high_low_balance=0.5, suppress_noise=0.5):
   """Computes sharpness using normalized Laplacian and Sobel filters."""
   assert image.dtype == np.float32
-  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  gray = make_image_for_sharpness_map(image, clahe_clip_limit=clahe_clip_limit)
   h, w = gray.shape[:2]
   area = h * w
   is_scaled = False
@@ -1349,6 +1407,50 @@ def compute_sharpness(image, base_area=1000000, blur_radius=2,
     sharpness = cv2.resize(sharpness, (w, h), interpolation=cv2.INTER_LANCZOS4)
   sharpness = z_score_normalization(sharpness)
   return np.clip(sharpness, -10, 10)
+
+
+def compute_sharpness_adaptive(
+    image, base_area=1000000, rescale=True,
+    clahe_clip_limit=0.5, suppress_noise=0.9):
+  """Computes the best sharpness map with adaptive parameters."""
+  assert image.dtype == np.float32
+  gray = make_image_for_sharpness_map(image, clahe_clip_limit=clahe_clip_limit)
+  h, w = gray.shape[:2]
+  area = h * w
+  is_scaled = False
+  if area > base_area * 2:
+    scale = (base_area / area) ** 0.5
+    gray = cv2.resize(gray, (math.ceil(w * scale), math.ceil(h * scale)),
+                      interpolation=cv2.INTER_AREA)
+    is_scaled = True
+  best_score = -1
+  best_map_raw = None
+  for blur_radius in [0, 1, 2]:
+    if blur_radius > 0:
+      ksize = math.ceil(2 * blur_radius) + 1
+      blurred = cv2.GaussianBlur(gray, (ksize, ksize), 0)
+    else:
+      blurred = gray
+    laplacian = np.abs(cv2.Laplacian(blurred, cv2.CV_32F, ksize=3))
+    if suppress_noise > 0:
+      noise_floor = min(estimate_white_noise_level(blurred), np.mean(laplacian) * 0.5)
+      laplacian = np.clip(laplacian - suppress_noise * noise_floor, 0, None)
+    laplacian = z_score_normalization(laplacian)
+    sobel_x = np.abs(cv2.Sobel(blurred, cv2.CV_32F, 1, 0, ksize=3))
+    sobel_y = np.abs(cv2.Sobel(blurred, cv2.CV_32F, 0, 1, ksize=3))
+    sobel_e = np.sqrt(sobel_x**2 + sobel_y**2)
+    sobel = z_score_normalization(sobel_e)
+    for high_low_balance in [1.2, 1.1, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5]:
+      sharp = high_low_balance * laplacian + (1 - high_low_balance) * sobel
+      isolation = estimate_foreground_isolation(sharp)
+      #print(f"blur={blur_radius}, hl={high_low_balance:.1f}, i={isolation:.3f}")
+      if isolation > best_score:
+        best_score = isolation
+        best_map_raw = sharp
+  best_map = z_score_normalization(best_map_raw)
+  if is_scaled and rescale:
+    best_map = cv2.resize(best_map, (w, h), interpolation=cv2.INTER_LANCZOS4)
+  return np.clip(best_map, -10, 10)
 
 
 def extract_mean_tiles(image, num_tiles=100, attractor=(0.5, 0.5), attractor_weight=0.1):
@@ -1482,8 +1584,7 @@ def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
   """Computes focus mask using multiple GrabCut strategies and blends them."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
-  sharpness_map = compute_sharpness(
-    image, high_low_balance=0.9, suppress_noise=0.9)
+  sharpness_map = compute_sharpness_adaptive(image)
   sharpness_map = percentile_normalization(sharpness_map, 2, 98)
   small_h, small_w = sharpness_map.shape[:2]
   if attractor_weight < 0:
@@ -1649,7 +1750,7 @@ def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
   assert all(image.dtype == np.float32 for image in images)
   h, w = images[0].shape[:2]
   pyramid_levels = min(pyramid_levels, int(math.log2(min(h, w))) - 3)
-  sharpness_maps = np.array([compute_sharpness(img) for img in images])
+  sharpness_maps = np.array([compute_sharpness_naive(img) for img in images])
   images_array = np.stack(images, axis=0)
   if smoothness <= 0:
     best_focus_index = np.argmax(sharpness_maps, axis=0)
@@ -1785,17 +1886,17 @@ def fill_black_margin_image(image):
   return restored[padding:-padding, padding:-padding]
 
 
-def apply_global_histeq_image(image, gamma=2.2, restore_color=True):
+def apply_global_histeq_image(image, gamma=2.2, white_level=255, restore_color=True):
   """Applies global histogram equalization contrast enhancement."""
   assert image.dtype == np.float32
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
-  l = np.power(l / 100, 1 / gamma) * 255
+  l = np.power(l / 100, 1 / gamma) * white_level
   byte_l = (l).astype(np.uint8)
   undo_bytes = byte_l.astype(np.float32)
   float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
   new_l = cv2.equalizeHist(byte_l).astype(np.float32)
-  new_l = np.power(new_l / 255, gamma) * 100
+  new_l = np.power(new_l / white_level, gamma) * 100
   corrected = new_l / np.maximum(float_ratio, 1e-6)
   corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
   new_l = np.clip(corrected, 0, 100)
@@ -1814,19 +1915,19 @@ def apply_global_histeq_image(image, gamma=2.2, restore_color=True):
   return np.clip(enhanced_image, 0, 1)
 
 
-def apply_clahe_image(image, clip_limit, gamma=2.2, restore_color=True):
+def apply_clahe_image(image, clip_limit, gamma=2.2, white_level=245, restore_color=True):
   """Applies CLAHE contrast enhancement."""
   assert image.dtype == np.float32
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
-  l = np.power(l / 100, 1 / gamma) * 100
+  l = np.power(l / 100, 1 / gamma) * white_level
   byte_l = (l).astype(np.uint8)
   undo_bytes = byte_l.astype(np.float32)
   float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
   tile_grid_size = (8, 8)
   clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
   new_l = clahe.apply(byte_l).astype(np.float32)
-  new_l = np.power(new_l / 100, gamma) * 100
+  new_l = np.power(new_l / white_level, gamma) * 100
   corrected = new_l / np.maximum(float_ratio, 1e-6)
   corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
   new_l = np.clip(corrected, 0, 100)
@@ -1993,13 +2094,15 @@ def convert_grayscale_image(image, expr):
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
   elif name in ["sharpness"]:
-    gray_image = compute_sharpness(image)
+    if "adaptive" in params:
+      gray_image = compute_sharpness_adaptive(image)
+    else:
+      gray_image = compute_sharpness_naive(image)
     gray_image = normalize_edge_image(gray_image)
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
   elif name in ["focus"]:
-    gray_image = compute_sharpness(
-      image, high_low_balance=0.9, suppress_noise=0.9)
+    gray_image = compute_sharpness_adaptive(image)
     gray_image = normalize_edge_image(gray_image)
     h, w = gray_image.shape[:2]
     attractor = parse_coordinate(params.get("attractor") or "0.5,0.5")
@@ -2036,8 +2139,7 @@ def convert_grayscale_image(image, expr):
       color_image = convert_image_lcs_tricolor(color_image)
     return np.clip(color_image, 0, 1)
   elif name in ["grabcut"]:
-    gray_image = compute_sharpness(
-      image, high_low_balance=0.9, suppress_noise=0.9)
+    gray_image = compute_sharpness_adaptive(image)
     gray_image = normalize_edge_image(gray_image)
     color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     confs = [
@@ -2064,7 +2166,7 @@ def convert_grayscale_image(image, expr):
 def convert_image_lcs(image):
   """Convert BGR image into LCS pseudo-color space."""
   assert image.dtype == np.float32
-  sharp = compute_sharpness(image, high_low_balance=0.9, suppress_noise=0.9)
+  sharp = compute_sharpness_adaptive(image)
   sharp = percentile_normalization(sharp, 2, 98)
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
@@ -2252,7 +2354,7 @@ def blur_image_naive_ecpb(image, levels, decay=0.0, contrast=1.0, edge_threshold
   new_h = ((h + factor - 1) // factor) * factor
   new_w = ((w + factor - 1) // factor) * factor
   expanded = cv2.copyMakeBorder(image, 0, new_h - h, 0, new_w - w, cv2.BORDER_REPLICATE)
-  sharp_full = compute_sharpness(expanded)
+  sharp_full = compute_sharpness_naive(expanded)
   sharp_full = percentile_normalization(sharp_full, 2, 98)
   edge_full = (sharp_full > edge_threshold).astype(np.float32)
   gauss_pyr = [expanded]
@@ -2279,7 +2381,7 @@ def blur_image_naive_ecpb(image, levels, decay=0.0, contrast=1.0, edge_threshold
     return (pooled >= 2).astype(np.float32)
   edge_pyr = [edge_full]
   for lvl in range(levels):
-    sharp_lvl = compute_sharpness(gauss_pyr[lvl + 1])
+    sharp_lvl = compute_sharpness_naive(gauss_pyr[lvl + 1])
     sharp_lvl = percentile_normalization(sharp_lvl, 2, 98)
     edge_lvl = (sharp_lvl > edge_threshold).astype(np.float32)
     wall_lvl = hard_pool_half(edge_pyr[-1])
@@ -2351,11 +2453,11 @@ def blur_image_stacked_ecpb(image, max_level, decay=0.0, contrast=1.0, edge_thre
     lap_pyr_full.append(lap)
     sizes_full.append((gauss_pyr_full[i].shape[1], gauss_pyr_full[i].shape[0]))
   sizes_full.append((gauss_pyr_full[-1].shape[1], gauss_pyr_full[-1].shape[0]))
-  sharp_full = compute_sharpness(expanded)
+  sharp_full = compute_sharpness_naive(expanded)
   sharp_full = percentile_normalization(sharp_full, 2, 98)
   edge_full = (sharp_full > edge_thresholds[0]).astype(np.float32)
   sharpness_pyr_full = [
-    percentile_normalization(compute_sharpness(gauss_pyr_full[i + 1]), 2, 98)
+    percentile_normalization(compute_sharpness_naive(gauss_pyr_full[i + 1]), 2, 98)
     for i in range(max_level)
   ]
   results = []
@@ -2457,7 +2559,7 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
     mask *= grabcut
     restored = image * mask[..., None] + restored * (1 - mask[..., None])
   if finish_edge > 0:
-    mask = compute_sharpness(image, blur_radius=0, base_area=sys.maxsize)
+    mask = compute_sharpness_naive(image, blur_radius=0, base_area=sys.maxsize)
     mask = percentile_normalization(mask, 2, 98)
     mask = sigmoidal_contrast_image(mask, gain=10, mid=0.9) * finish_edge
     mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
