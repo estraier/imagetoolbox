@@ -490,6 +490,7 @@ def compute_auto_white_balance_factors(image, edge_weight=0.5, luminance_weight=
   std_range = 2
   if edge_weight > 0:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = np.clip(gray, 0, 1)
     sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
     sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
     edge_mask = np.sqrt(sobel_x**2 + sobel_y**2)
@@ -653,6 +654,7 @@ def adjust_white_balance_image(image, expr="auto"):
     "starlight": (1.4, 1.0, 0.6),
   }
   gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  gray = np.clip(gray, 0, 1)
   expr = expr.strip().lower()
   params = parse_name_opts_expression(expr)
   name = params["name"]
@@ -785,7 +787,7 @@ def is_homography_valid(m, width, height):
 
 
 def log_homography_matrix(m):
-  """Print a log message of a homography matrix."""
+  """Prints a log message of a homography matrix."""
   sx, shear, dx = m[0]
   shear_y, sy, dy = m[1]
   scale_x = np.sqrt(sx**2 + shear**2)
@@ -796,9 +798,10 @@ def log_homography_matrix(m):
 
 
 def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
-  """Make a byte-gray enhanced gray image for alignment."""
+  """Makes a byte-gray enhanced gray image for alignment."""
   assert image.dtype == np.float32
   gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  gray_image = np.clip(gray_image, 0, 1)
   if denoise > 0:
     ksize = math.ceil(2 * denoise) + 1
     sigma_color = min(0.05 * math.sqrt(ksize), 0.35)
@@ -1172,6 +1175,7 @@ def merge_images_denoise(images, clip_limit=0.4, blur_radius=3):
   smooth_image = cv2.addWeighted(smooth_image, 1.8, blurred, -0.8, 0)
   smooth_image = np.clip(smooth_image, 0, 1)
   gray_image = cv2.cvtColor(smooth_image, cv2.COLOR_BGR2GRAY)
+  gray_image = np.clip(gray_image, 0, 1)
   sobel_x = np.abs(cv2.Sobel(gray_image, cv2.CV_32F, 1, 0, ksize=3))
   sobel_y = np.abs(cv2.Sobel(gray_image, cv2.CV_32F, 0, 1, ksize=3))
   sobel_e = np.sqrt(sobel_x**2 + sobel_y**2)
@@ -1354,31 +1358,29 @@ def estimate_foreground_isolation(image, num_tiles=100):
   return float(np.clip(gini, 0.0, 1.0))
 
 
-def make_image_for_sharpness_map(image, clahe_clip_limit=0.5):
-  """Make a float32 enhanced gray image for sharpness map."""
+def make_image_for_sharpness_map(image, clahe_clip_limit=0.5, clahe_gamma=2.2):
+  """Makes a float32 enhanced gray image for sharpness map without using LAB."""
   assert image.dtype == np.float32
-  gamma = 2.2
-  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-  l, a, b = cv2.split(lab)
-  l = np.power(l / 100, 1 / gamma) * 255
-  byte_l = (l).astype(np.uint8)
-  undo_bytes = byte_l.astype(np.float32)
-  float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
-  tile_grid_size = (8, 8)
-  clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=tile_grid_size)
-  new_l = clahe.apply(byte_l).astype(np.float32)
-  new_l = np.power(new_l / 255, gamma) * 100
-  corrected = new_l / np.maximum(float_ratio, 1e-6)
-  corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
-  new_l = np.clip(corrected, 0, 100)
-  lab = cv2.merge((new_l, a, b))
-  gray_image = cv2.cvtColor(cv2.cvtColor(lab, cv2.COLOR_LAB2BGR), cv2.COLOR_BGR2GRAY)
-  return gray_image
+  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  gray = np.clip(gray, 0, 1)
+  if clahe_clip_limit > 0:
+    gray = np.power(gray, 1 / clahe_gamma) * 255.0
+    byte_gray = gray.astype(np.uint8)
+    undo_bytes = byte_gray.astype(np.float32)
+    float_ratio = np.where(byte_gray > 0, undo_bytes / (gray + 1e-6), gray)
+    tile_grid_size = (8, 8)
+    clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=tile_grid_size)
+    new_gray = clahe.apply(byte_gray).astype(np.float32)
+    new_gray = np.power(new_gray / 255.0, clahe_gamma)
+    corrected = new_gray / np.maximum(float_ratio, 1e-6)
+    gray = np.where((new_gray == 0) | (float_ratio < 0.5), new_gray, corrected)
+    gray = np.clip(gray, 0, 1).astype(np.float32)
+  return gray
 
 
 def compute_sharpness_naive(
     image, base_area=1000000, blur_radius=2,
-    rescale=True, clahe_clip_limit=0.5, high_low_balance=0.5, suppress_noise=0.5):
+    rescale=True, clahe_clip_limit=0.3, high_low_balance=0.5, suppress_noise=0.5):
   """Computes sharpness using normalized Laplacian and Sobel filters."""
   assert image.dtype == np.float32
   gray = make_image_for_sharpness_map(image, clahe_clip_limit=clahe_clip_limit)
@@ -1411,7 +1413,7 @@ def compute_sharpness_naive(
 
 def compute_sharpness_adaptive(
     image, base_area=1000000, rescale=True,
-    clahe_clip_limit=0.5, suppress_noise=0.9):
+    clahe_clip_limit=0.3, suppress_noise=0.9):
   """Computes the best sharpness map with adaptive parameters."""
   assert image.dtype == np.float32
   gray = make_image_for_sharpness_map(image, clahe_clip_limit=clahe_clip_limit)
@@ -1863,6 +1865,7 @@ def fill_black_margin_image(image):
   undo_bytes = byte_image.astype(np.float32)
   float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), padded)
   gray = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
+  gray = np.clip(gray, 0, 1)
   h, w = gray.shape
   mask = np.zeros((h + 2, w + 2), np.uint8)
   for x in range(w):
@@ -2012,6 +2015,7 @@ def apply_artistic_filter_image(image, name):
     undo_bytes = byte_image.astype(np.float32)
     float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
     gray = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
+    gray = np.clip(gray, 0, 1)
     gray = cv2.medianBlur(gray, 7)
     edges = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 9, 10)
     color = cv2.bilateralFilter(byte_image, 9, 250, 250)
