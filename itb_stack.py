@@ -1361,24 +1361,20 @@ def estimate_foreground_isolation(image, num_tiles=100):
   return float(np.clip(gini, 0.0, 1.0))
 
 
-def make_image_for_sharpness_map(image, clahe_clip_limit=0.5, clahe_gamma=2.2):
-  """Makes a float32 enhanced gray image for sharpness map without using LAB."""
+def apply_clahe_gray_image(image, clip_limit, gamma=2.2):
+  """Applies CLAHE on a gray image."""
   assert image.dtype == np.float32
-  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-  gray = np.clip(gray, 0, 1)
-  if clahe_clip_limit > 0:
-    gray = np.power(gray, 1 / clahe_gamma) * 255.0
-    byte_gray = gray.astype(np.uint8)
-    undo_bytes = byte_gray.astype(np.float32)
-    float_ratio = np.where(byte_gray > 0, undo_bytes / (gray + 1e-6), gray)
-    tile_grid_size = (8, 8)
-    clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=tile_grid_size)
-    new_gray = clahe.apply(byte_gray).astype(np.float32)
-    new_gray = np.power(new_gray / 255.0, clahe_gamma)
-    corrected = new_gray / np.maximum(float_ratio, 1e-6)
-    gray = np.where((new_gray == 0) | (float_ratio < 0.5), new_gray, corrected)
-    gray = np.clip(gray, 0, 1).astype(np.float32)
-  return gray
+  image = np.power(image, 1 / gamma) * 255.0
+  byte_image = image.astype(np.uint8)
+  undo_bytes = byte_image.astype(np.float32)
+  float_ratio = np.where(byte_image > 0, undo_bytes / (image + 1e-6), image)
+  tile_grid_size = (8, 8)
+  clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+  new_image = clahe.apply(byte_image).astype(np.float32)
+  new_image = np.power(new_image / 255.0, gamma)
+  corrected = new_image / np.maximum(float_ratio, 1e-6)
+  image = np.where((new_image == 0) | (float_ratio < 0.5), new_image, corrected)
+  return np.clip(image, 0, 1).astype(np.float32)
 
 
 def compute_sharpness_naive(
@@ -1386,7 +1382,9 @@ def compute_sharpness_naive(
     rescale=True, clahe_clip_limit=0.3, high_low_balance=0.5, suppress_noise=0.5):
   """Computes sharpness using normalized Laplacian and Sobel filters."""
   assert image.dtype == np.float32
-  gray = make_image_for_sharpness_map(image, clahe_clip_limit=clahe_clip_limit)
+  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  if clahe_clip_limit > 0:
+    gray = apply_clahe_gray_image(gray, clahe_clip_limit)
   h, w = gray.shape[:2]
   area = h * w
   is_scaled = False
@@ -1419,7 +1417,9 @@ def compute_sharpness_adaptive(
     clahe_clip_limit=0.3, suppress_noise=0.9):
   """Computes the best sharpness map with adaptive parameters."""
   assert image.dtype == np.float32
-  gray = make_image_for_sharpness_map(image, clahe_clip_limit=clahe_clip_limit)
+  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  if clahe_clip_limit > 0:
+    gray = apply_clahe_gray_image(gray, clahe_clip_limit)
   h, w = gray.shape[:2]
   area = h * w
   is_scaled = False
@@ -1448,7 +1448,9 @@ def compute_sharpness_adaptive(
     for high_low_balance in [1.2, 1.1, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5]:
       sharp = high_low_balance * laplacian + (1 - high_low_balance) * sobel
       isolation = estimate_foreground_isolation(sharp)
+
       #print(f"blur={blur_radius}, hl={high_low_balance:.1f}, i={isolation:.3f}")
+
       if isolation > best_score:
         best_score = isolation
         best_map_raw = sharp
