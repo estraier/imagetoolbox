@@ -118,6 +118,7 @@ def show_image(image, title="show_image"):
     image = image / 255
   if len(image.shape) == 2:
     image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    image = np.clip(image, 0, 1)
   cv2.imshow(title, image)
   cv2.waitKey(0)
   cv2.destroyAllWindows()
@@ -138,6 +139,7 @@ def normalize_input_image(image):
     image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
   elif image.shape[2] == 4:
     image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+  image = np.clip(image, 0, 1)
   image = srgb_to_linear(image)
   return image, bits
 
@@ -506,6 +508,7 @@ def compute_auto_white_balance_factors(image, edge_weight=0.5, luminance_weight=
   if luminance_weight > 0:
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l_channel, _, _ = cv2.split(lab)
+    l_channel = np.clip(l_channel, 0, 100)
     l_mean = np.mean(l_channel)
     l_std = np.std(l_channel) + 1e-6
     luminance_mask = np.clip(l_channel, l_mean - std_range * l_std, l_mean + std_range * l_std)
@@ -1894,6 +1897,9 @@ def apply_global_histeq_image(image, gamma=2.2, white_level=255, restore_color=T
   assert image.dtype == np.float32
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
+  l = np.clip(l, 0, 100)
+  a = np.clip(a, -128, 127)
+  b = np.clip(b, -128, 127)
   l = np.power(l / 100, 1 / gamma) * white_level
   byte_l = (l).astype(np.uint8)
   undo_bytes = byte_l.astype(np.float32)
@@ -1923,6 +1929,9 @@ def apply_clahe_image(image, clip_limit, gamma=2.2, white_level=245, restore_col
   assert image.dtype == np.float32
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
+  l = np.clip(l, 0, 100)
+  a = np.clip(a, -128, 127)
+  b = np.clip(b, -128, 127)
   l = np.power(l / 100, 1 / gamma) * white_level
   byte_l = (l).astype(np.uint8)
   undo_bytes = byte_l.astype(np.float32)
@@ -2058,29 +2067,32 @@ def convert_grayscale_image(image, expr):
   elif name in ["lab", "luminance"]:
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, _, _ = cv2.split(lab)
+    l = np.clip(l, 0, 100)
     gray_image = l / 100
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
   elif name in ["hsv", "value"]:
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     _, _, v = cv2.split(hsv)
-    gray_image = v
+    gray_image = np.clip(v, 0, 1)
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
   elif name in ["hsl", "lightness"]:
     hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
     _, l, _ = cv2.split(hls)
-    gray_image = l
+    gray_image = np.clip(l, 0, 1)
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
   elif name in ["laplacian"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray_image = np.clip(gray_image, 0, 1)
     gray_image = np.abs(cv2.Laplacian(gray_image, cv2.CV_32F))
     gray_image = normalize_edge_image(gray_image)
     gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(gray_image, 0, 1)
   elif name in ["sobel"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray_image = np.clip(gray_image, 0, 1)
     sobel_x = cv2.Sobel(gray_image, cv2.CV_32F, 1, 0, ksize=3)
     sobel_y = cv2.Sobel(gray_image, cv2.CV_32F, 0, 1, ksize=3)
     gray_image = cv2.magnitude(sobel_x, sobel_y)
@@ -2089,6 +2101,7 @@ def convert_grayscale_image(image, expr):
     return np.clip(gray_image, 0, 1)
   elif name in ["stddev"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray_image = np.clip(gray_image, 0, 1)
     square_image = gray_image ** 2
     level = max(1, compute_levels_blur_image_portrait(gray_image) - 2)
     mean = blur_image_pyramid(gray_image, level)
@@ -2174,6 +2187,9 @@ def convert_image_lcs(image):
   sharp = percentile_normalization(sharp, 2, 98)
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
+  l = np.clip(l, 0, 100)
+  a = np.clip(a, -128, 127)
+  b = np.clip(b, -128, 127)
   l_norm = percentile_normalization(l, 2, 98)
   sharp_norm = percentile_normalization(sharp, 2, 98)
   chroma = np.sqrt(a ** 2 + b ** 2)
