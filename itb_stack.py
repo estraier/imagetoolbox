@@ -1139,6 +1139,20 @@ def align_images_hugin(images, input_paths, bits_list):
   return aligned_images
 
 
+def adjust_size_images(images):
+  """Adjusts the size of images."""
+  assert all(image.dtype == np.float32 for image in images)
+  max_h = max(image.shape[0] for image in images)
+  max_w = max(image.shape[1] for image in images)
+  resized_images = []
+  for image in images:
+    h, w = image.shape[:2]
+    if h != max_h or w != max_w:
+      image = cv2.resize(image, (max_w, max_h), interpolation=cv2.INTER_LANCZOS4)
+    resized_images.append(image)
+  return resized_images
+
+
 def fix_overflown_image(image):
   """Replaces NaN and -inf with 0, and inf with 1."""
   assert image.dtype == np.float32
@@ -1447,7 +1461,7 @@ def compute_sharpness_adaptive(
       sharp = high_low_balance * laplacian + (1 - high_low_balance) * sobel
       isolation = estimate_foreground_isolation(sharp)
 
-      #print(f"blur={blur_radius}, hl={high_low_balance:.1f}, i={isolation:.3f}")
+      print(f"blur={blur_radius}, hl={high_low_balance:.1f}, i={isolation:.3f}")
 
       if isolation > best_score:
         best_score = isolation
@@ -3038,6 +3052,7 @@ def main():
     images = align_images_hugin(images, args.inputs, bits_list)
   else:
     raise ValueError(f"Unknown align method: f{align_name}")
+  images = adjust_size_images(images)
   if len(aligned_indices) > 0:
     logger.debug(f"aligned indices: {sorted(list(aligned_indices))}")
     if args.ignore_unaligned:
