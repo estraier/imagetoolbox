@@ -800,6 +800,22 @@ def log_homography_matrix(m):
                f"scale=({scale_x:.2f}, {scale_y:.2f}), angle={angle:.2f}°")
 
 
+def apply_clahe_gray_image(image, clip_limit, gamma=2.2):
+  """Applies CLAHE on a gray image."""
+  assert image.dtype == np.float32
+  image = np.power(image, 1 / gamma) * 255.0
+  byte_image = image.astype(np.uint8)
+  undo_bytes = byte_image.astype(np.float32)
+  float_ratio = np.where(byte_image > 0, undo_bytes / (image + 1e-6), image)
+  tile_grid_size = (8, 8)
+  clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+  new_image = clahe.apply(byte_image).astype(np.float32)
+  new_image = np.power(new_image / 255.0, gamma)
+  corrected = new_image / np.maximum(float_ratio, 1e-6)
+  image = np.where((new_image == 0) | (float_ratio < 0.5), new_image, corrected)
+  return np.clip(image, 0, 1).astype(np.float32)
+
+
 def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
   """Makes a byte-gray enhanced gray image for alignment."""
   assert image.dtype == np.float32
@@ -810,11 +826,9 @@ def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
     sigma_color = min(0.05 * math.sqrt(ksize), 0.35)
     sigma_space = 10 * math.sqrt(ksize)
     gray_image = cv2.bilateralFilter(gray_image, denoise, sigma_color, sigma_space)
-  byte_image = (np.clip(gray_image, 0, 1) * 255).astype(np.uint8)
   if clahe_clip_limit > 0:
-    tile_grid_size = (8, 8)
-    clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=tile_grid_size)
-    byte_image = clahe.apply(byte_image)
+    gray_image = apply_clahe_gray_image(gray_image, clahe_clip_limit)
+  byte_image = (np.clip(gray_image, 0, 1) * 255).astype(np.uint8)
   return np.clip(byte_image, 0, 255)
 
 
@@ -1359,22 +1373,6 @@ def estimate_foreground_isolation(image, num_tiles=100):
   index = np.arange(1, n + 1)
   gini = ((2 * np.sum(index * values)) / (n * np.sum(values))) - (n + 1) / n
   return float(np.clip(gini, 0.0, 1.0))
-
-
-def apply_clahe_gray_image(image, clip_limit, gamma=2.2):
-  """Applies CLAHE on a gray image."""
-  assert image.dtype == np.float32
-  image = np.power(image, 1 / gamma) * 255.0
-  byte_image = image.astype(np.uint8)
-  undo_bytes = byte_image.astype(np.float32)
-  float_ratio = np.where(byte_image > 0, undo_bytes / (image + 1e-6), image)
-  tile_grid_size = (8, 8)
-  clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-  new_image = clahe.apply(byte_image).astype(np.float32)
-  new_image = np.power(new_image / 255.0, gamma)
-  corrected = new_image / np.maximum(float_ratio, 1e-6)
-  image = np.where((new_image == 0) | (float_ratio < 0.5), new_image, corrected)
-  return np.clip(image, 0, 1).astype(np.float32)
 
 
 def compute_sharpness_naive(
