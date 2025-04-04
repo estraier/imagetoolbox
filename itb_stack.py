@@ -1731,7 +1731,7 @@ def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
 
 
 def make_gaussian_pyramid(image, levels):
-  """Generate Gaussian pyramid."""
+  """Generates Gaussian pyramid."""
   assert image.dtype == np.float32
   pyramid = [image]
   for _ in range(levels):
@@ -1741,7 +1741,7 @@ def make_gaussian_pyramid(image, levels):
 
 
 def make_laplacian_pyramid(image, levels):
-  """Generate Laplacian pyramid."""
+  """Generates Laplacian pyramid."""
   assert image.dtype == np.float32
   gaussian_pyr = make_gaussian_pyramid(image, levels)
   laplacian_pyr = []
@@ -2290,40 +2290,8 @@ def blur_image_gaussian(image, radius):
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
 
 
-
-
-def circular_blur_kernel(radius):
-  """Creates a normalized circular (disc-shaped) kernel."""
-  size = radius * 2 + 1
-  y, x = np.ogrid[-radius:radius+1, -radius:radius+1]
-  mask = x**2 + y**2 <= radius**2
-  kernel = np.zeros((size, size), dtype=np.float32)
-  kernel[mask] = 1
-  kernel /= np.sum(kernel)
-  return kernel
-
-def ring_blur_kernel(radius_outer, radius_inner=0):
-  size = radius_outer * 2 + 1
-  center = radius_outer
-  Y, X = np.ogrid[:size, :size]
-  dist = np.sqrt((X - center) ** 2 + (Y - center) ** 2)
-  kernel = np.where((dist >= radius_inner) & (dist <= radius_outer), 1.0, 0.0)
-  kernel /= np.sum(kernel)
-  return kernel.astype(np.float32)
-
-
-def circular_blur(image, radius=5):
-  """
-  Applies a circular disc-shaped blur, similar to optical bokeh.
-  radius: radius of the circular kernel, controls strength.
-  """
-  kernel = circular_blur_kernel(radius)
-  #kernel = ring_blur_kernel(radius)
-  blurred = cv2.filter2D(image, -1, kernel, borderType=cv2.BORDER_REFLECT)
-  return blurred
-
-
-def pyramid_down(image):
+def pyramid_down_naive(image):
+  """Simulates cv2.pyrDown to shrink the image into one-fourth."""
   tx, ty = 0.5, 0.5
   m = np.float32([[1, 0, tx], [0, 1, ty]])
   image = cv2.warpAffine(image, m, (image.shape[1], image.shape[0]),
@@ -2333,7 +2301,8 @@ def pyramid_down(image):
   return resized
 
 
-def pyramid_up(image):
+def pyramid_up_naive(image):
+  """Simulates cv2.pyrUp to expand the image by four times."""
   image = cv2.resize(image, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_LINEAR)
   tx, ty = -0.5, -0.5
   m = np.float32([[1, 0, tx], [0, 1, ty]])
@@ -2341,22 +2310,6 @@ def pyramid_up(image):
                          flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
   image = cv2.GaussianBlur(image, (3, 3), sigmaX=0.3, sigmaY=0.3)
   return image
-
-
-
-
-def make_gaussian_pyramid_resize(image, levels):
-  assert image.dtype == np.float32
-  pyramid = [image]
-  for _ in range(levels):
-    image = pyramid_down(image)
-    pyramid.append(image)
-  return pyramid
-
-
-  #pyramid = make_gaussian_pyramid_resize(expanded, levels)
-  #diffused = resize_up(diffused)
-
 
 
 def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
