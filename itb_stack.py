@@ -1508,7 +1508,7 @@ def extract_mean_tiles(image, num_tiles=100, attractor=(0.5, 0.5), attractor_wei
   return tiles
 
 
-def find_best_rect(tiles, max_window_size=5, size_penalty=0.5):
+def find_best_rect(tiles, max_window_size=5, area_penalty=0.5):
   """Finds the best rectangle of the largest average values."""
   tile_h_count = len(tiles[0])
   tile_w_count = len(tiles)
@@ -1529,7 +1529,7 @@ def find_best_rect(tiles, max_window_size=5, size_penalty=0.5):
               y1 = max(y1, y + h_tile)
           num_tiles_in_window = win_w * win_h
           avg_score = total_score / num_tiles_in_window
-          weighted_score = avg_score * (num_tiles_in_window ** (1 - size_penalty))
+          weighted_score = avg_score * (num_tiles_in_window ** (1 - area_penalty))
           if weighted_score > best_score:
             best_score = weighted_score
             best_rect = (x0, y0, x1 - x0, y1 - y0)
