@@ -1533,8 +1533,8 @@ def find_best_rect(tiles, max_window_size=5, area_penalty=0.5):
   return best_rect
 
 
-def find_good_focus_tiles(tiles, sep_area_balance=0.5, area_penalty=0.75):
-  """Finds a good subset of focus tiles combining variance reduction and size-based score."""
+def find_good_focus_tiles(tiles, sep_area_balance=0.5, area_penalty=0.75, parity_bias=0.5):
+  """Finds a good subset of focus tiles."""
   flat_tiles = [tile for col in tiles for tile in col]
   flat_tiles = sorted(flat_tiles, key=lambda t: t[0], reverse=True)
   all_scores = [t[0] for t in flat_tiles]
@@ -1549,9 +1549,11 @@ def find_good_focus_tiles(tiles, sep_area_balance=0.5, area_penalty=0.75):
     selected_scores.append(score_i)
     running_total += score_i
     p = len(selected_scores) / len(all_scores)
+    w_sel = p ** parity_bias
+    w_non = (1 - p) ** parity_bias
     var_sel = np.var(selected_scores)
     var_non = np.var(non_selected_scores)
-    split_variance = p * var_sel + (1 - p) * var_non
+    split_variance = w_sel * var_sel + w_non * var_non
     variance_gain = 1.0 - split_variance / (total_var + 1e-6)
     variance_score = variance_gain ** 0.5
     size_score = (running_total / i) * (i ** (1 - area_penalty))
