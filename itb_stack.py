@@ -1460,9 +1460,6 @@ def compute_sharpness_adaptive(
     for high_low_balance in [1.2, 1.1, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5]:
       sharp = high_low_balance * laplacian + (1 - high_low_balance) * sobel
       isolation = estimate_foreground_isolation(sharp)
-
-      print(f"blur={blur_radius}, hl={high_low_balance:.1f}, i={isolation:.3f}")
-
       if isolation > best_score:
         best_score = isolation
         best_map_raw = sharp
@@ -1541,7 +1538,7 @@ def find_good_focus_tiles(tiles, sep_area_balance=0.5, area_penalty=0.75):
   flat_tiles = [tile for col in tiles for tile in col]
   flat_tiles = sorted(flat_tiles, key=lambda t: t[0], reverse=True)
   all_scores = [t[0] for t in flat_tiles]
-  total_std = np.std(all_scores)
+  total_var = np.var(all_scores)
   selected_scores = []
   non_selected_scores = all_scores.copy()
   best_score = -np.inf
@@ -1552,10 +1549,10 @@ def find_good_focus_tiles(tiles, sep_area_balance=0.5, area_penalty=0.75):
     selected_scores.append(score_i)
     running_total += score_i
     p = len(selected_scores) / len(all_scores)
-    std_sel = np.std(selected_scores)
-    std_non = np.std(non_selected_scores)
-    split_variance = p * std_sel**2 + (1 - p) * std_non**2
-    variance_gain = 1.0 - split_variance / (total_std**2 + 1e-6)
+    var_sel = np.var(selected_scores)
+    var_non = np.var(non_selected_scores)
+    split_variance = p * var_sel + (1 - p) * var_non
+    variance_gain = 1.0 - split_variance / (total_var + 1e-6)
     variance_score = variance_gain ** 0.5
     size_score = (running_total / i) * (i ** (1 - area_penalty))
     score = sep_area_balance * variance_score + (1 - sep_area_balance) * size_score
@@ -2595,10 +2592,14 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
       blurred = blur_image_stacked_ecpb(
         blurred, max_level, decay=decay, contrast=contrast,
         edge_threshold=edge_threshold, bokeh_balance=bokeh_balance)
-    else:
+    elif max_level >= -100:
+      max_level = max_level * -1
       blurred = blur_image_naive_ecpb(
-        blurred, -max_level, decay=decay, contrast=contrast,
+        blurred, max_level, decay=decay, contrast=contrast,
         edge_threshold=edge_threshold)
+    else:
+      max_level = max_level * -1 - 100
+      blurred = blur_image_pyramid(blurred, max_level, decay=decay, contrast=contrast)
   restored = blurred
   if grabcut > 0:
     mask = compute_focus_grabcut(image, attractor=attractor, attractor_weight=attractor_weight)
