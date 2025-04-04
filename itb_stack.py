@@ -1611,7 +1611,7 @@ def larger_rect(rect, area_ratio, w, h):
 
 def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
                           rect_closed=1.0, rect_open=1.0, tiles_closed=1.0, tiles_open=1.0,
-                          use_rms=True, sharpness_percentile=95):
+                          use_rms=True, sharpness_percentile=95, use_faces=True):
   """Computes focus mask using multiple GrabCut strategies and blends them."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
@@ -1634,6 +1634,17 @@ def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
   rect_large = larger_rect(rect, 2, small_w, small_h)
   centroid = compute_centroid(sharpness_map, rect)
   centroid_rect = center_rect(rect_large, centroid, 0.5)
+  rect_faces = []
+  if use_faces:
+    face_image = cv2.resize(image, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    faces = detect_faces_image(image)
+    def rects_overlap(r1, r2):
+      x1, y1, w1, h1 = r1
+      x2, y2, w2, h2 = r2
+      return not (x1 + w1 <= x2 or x2 + w2 <= x1 or y1 + h1 <= y2 or y2 + h2 <= y1)
+    for face in faces:
+      if rects_overlap(face, centroid_rect):
+        rect_faces.append(face)
   small_area = small_h * small_w
   base_area = 100000
   if base_area < small_area:
@@ -1649,6 +1660,7 @@ def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
                   for s, x, y, w, h in good_tiles]
     sharpness_map = cv2.resize(sharpness_map, (small_w, small_h),
                                interpolation=cv2.INTER_LINEAR)
+    rect_faces = [[round(x * base_scale) for x in face] for face in rect_faces]
   else:
     small_image = image
   sharp_threshold = np.percentile(sharpness_map, sharpness_percentile)
@@ -1664,6 +1676,12 @@ def compute_focus_grabcut(image, attractor=(0.5, 0.5), attractor_weight=0.1,
     else:
       mask = np.full((small_h, small_w), cv2.GC_PR_BGD, np.uint8)
       mask[y:y+rh, x:x+rw] = cv2.GC_PR_FGD
+    for face in rect_faces:
+      fx, fy, fw, fh = face
+      mask[fy:fy+fh, fx:fx+fw] = cv2.GC_PR_FGD
+      cx, cy = fx + fw // 4, fy + fh // 4
+      cw, ch = fw // 2, fh // 2
+      mask[cy:cy+ch, cx:cx+cw] = cv2.GC_FGD
     bgd_model = np.zeros((1, 65), np.float64)
     fgd_model = np.zeros((1, 65), np.float64)
     cv2.grabCut(byte_image, mask, None,
@@ -2148,7 +2166,7 @@ def convert_grayscale_image(image, expr):
     color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(color_image, 0, 1)
   elif name in ["face"]:
-    faces = detect_faces(image)
+    faces = detect_faces_image(image)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
     hsv = cv2.merge((h, s / 2, v))
@@ -2218,15 +2236,19 @@ def convert_grayscale_image(image, expr):
   raise ValueError(f"Unknown grayscale name: {name}")
 
 
-def detect_faces(image, expand=True):
+def detect_faces_image(image, expand=True, min_area=0.05):
   """Detects faces in the image and expands to cover full head."""
   assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  image_area = h * w
   gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
   gray_image = np.clip(gray_image, 0, 1)
   byte_image = (gray_image * 255).astype(np.uint8)
   face_cascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
   faces = face_cascade.detectMultiScale(byte_image, scaleFactor=1.1, minNeighbors=5)
+  faces = [tuple(int(x) for x in face) for face in faces]
+  faces = [(x for x in face) for face in faces if face[2] * face[3] >= image_area * min_area]
   if expand:
     height = image.shape[0]
     for i in range(len(faces)):
@@ -2235,7 +2257,7 @@ def detect_faces(image, expand=True):
       down_expand = int(0.1 * h)
       new_y = max(0, y - up_expand)
       new_h = min(h + up_expand + down_expand, height - new_y)
-      faces[i] = (x, new_y, w, new_h)
+      faces[i] = x, new_y, w, new_h
   return faces
 
 
