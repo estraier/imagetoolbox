@@ -119,6 +119,7 @@ def show_image(image, title="show_image"):
   if len(image.shape) == 2:
     image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     image = np.clip(image, 0, 1)
+  image = linear_to_srgb(image)
   cv2.imshow(title, image)
   cv2.waitKey(0)
   cv2.destroyAllWindows()
