@@ -2087,34 +2087,34 @@ def convert_grayscale_image(image, expr):
     sum_ratio = sum(color_map)
     weights = np.array([x / sum_ratio for x in color_map])
     gray_image = np.dot(image[..., :3], weights).astype(np.float32)
-    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    return np.clip(gray_image, 0, 1)
+    gray_color = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(gray_color, 0, 1)
   elif name in ["lab", "luminance"]:
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, _, _ = cv2.split(lab)
     l = np.clip(l, 0, 100)
     gray_image = l / 100
-    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    return np.clip(gray_image, 0, 1)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(color_image, 0, 1)
   elif name in ["hsv", "value"]:
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     _, _, v = cv2.split(hsv)
     gray_image = np.clip(v, 0, 1)
-    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    return np.clip(gray_image, 0, 1)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(color_image, 0, 1)
   elif name in ["hsl", "lightness"]:
     hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
     _, l, _ = cv2.split(hls)
     gray_image = np.clip(l, 0, 1)
-    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    return np.clip(gray_image, 0, 1)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(color_image, 0, 1)
   elif name in ["laplacian"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray_image = np.clip(gray_image, 0, 1)
     gray_image = np.abs(cv2.Laplacian(gray_image, cv2.CV_32F))
     gray_image = normalize_edge_image(gray_image)
-    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    return np.clip(gray_image, 0, 1)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(color_image, 0, 1)
   elif name in ["sobel"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray_image = np.clip(gray_image, 0, 1)
@@ -2122,8 +2122,8 @@ def convert_grayscale_image(image, expr):
     sobel_y = cv2.Sobel(gray_image, cv2.CV_32F, 0, 1, ksize=3)
     gray_image = cv2.magnitude(sobel_x, sobel_y)
     gray_image = normalize_edge_image(gray_image)
-    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    return np.clip(gray_image, 0, 1)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(color_image, 0, 1)
   elif name in ["stddev"]:
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray_image = np.clip(gray_image, 0, 1)
@@ -2133,8 +2133,8 @@ def convert_grayscale_image(image, expr):
     mean_sq = blur_image_pyramid(square_image, level)
     stddev = np.sqrt(np.clip(mean_sq - mean**2, 1e-6, None))
     gray_image = normalize_edge_image(stddev)
-    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    return np.clip(gray_image, 0, 1)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(color_image, 0, 1)
   elif name in ["sharpness"]:
     if "adaptive" in params:
       gray_image = compute_sharpness_adaptive(image)
@@ -2144,8 +2144,18 @@ def convert_grayscale_image(image, expr):
     else:
       gray_image = compute_sharpness_naive(image)
     gray_image = normalize_edge_image(gray_image)
-    gray_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
-    return np.clip(gray_image, 0, 1)
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(color_image, 0, 1)
+  elif name in ["face"]:
+    faces = detect_faces(image)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    hsv = cv2.merge((h, s / 2, v))
+    color_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    color_image = np.clip(color_image, 0, 1)
+    for face in faces:
+      color_image = draw_rectangle(color_image, *face, 0, (1, 0, 0))
+    return np.clip(color_image, 0, 1)
   elif name in ["focus"]:
     gray_image = compute_sharpness_adaptive(image)
     gray_image = normalize_edge_image(gray_image)
@@ -2165,7 +2175,6 @@ def convert_grayscale_image(image, expr):
       copy_param_to_kwargs(params, kwargs, "attractor_weight", float)
       tiles = extract_mean_tiles(gray_image, **kwargs)
       rect = find_best_rect(tiles)
-
     rect_large = larger_rect(rect, 2, w, h)
     centroid = compute_centroid(gray_image, rect)
     centroid_rect = center_rect(rect_large, centroid, 0.5)
@@ -2208,8 +2217,29 @@ def convert_grayscale_image(image, expr):
   raise ValueError(f"Unknown grayscale name: {name}")
 
 
+def detect_faces(image, expand=True):
+  """Detects faces in the image and expands to cover full head."""
+  assert image.dtype == np.float32
+  gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  gray_image = np.clip(gray_image, 0, 1)
+  byte_image = (gray_image * 255).astype(np.uint8)
+  face_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+  faces = face_cascade.detectMultiScale(byte_image, scaleFactor=1.1, minNeighbors=5)
+  if expand:
+    height = image.shape[0]
+    for i in range(len(faces)):
+      x, y, w, h = faces[i]
+      up_expand = int(0.25 * h)
+      down_expand = int(0.1 * h)
+      new_y = max(0, y - up_expand)
+      new_h = min(h + up_expand + down_expand, height - new_y)
+      faces[i] = (x, new_y, w, new_h)
+  return faces
+
+
 def convert_image_lcs(image):
-  """Convert BGR image into LCS pseudo-color space."""
+  """Converts BGR image into LCS pseudo-color space."""
   assert image.dtype == np.float32
   sharp = compute_sharpness_adaptive(image)
   sharp = percentile_normalization(sharp, 2, 98)
@@ -2228,7 +2258,7 @@ def convert_image_lcs(image):
 
 def convert_image_lcs_tricolor(image):
   assert image.dtype == np.float32
-  """Convert LCS pseudo-color space into tricolor BGR."""
+  """Converts LCS pseudo-color space into tricolor BGR."""
   l, c, s = cv2.split(image)
   h_red = np.full_like(l, 0)
   l_red = l

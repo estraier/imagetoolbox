@@ -377,7 +377,7 @@ class TestItbStack(unittest.TestCase):
   def test_convert_grayscale_image(self):
     image = generate_test_image()
     for name in ["bt601", "lab", "hsv", "hsl", "laplacian", "sobel",
-                 "stddev", "sharpness", "focus", "lcs", "lcs:tricolor", "grabcut"]:
+                 "stddev", "sharpness", "face", "focus", "lcs", "lcs:tricolor", "grabcut"]:
       processed = convert_grayscale_image(image, name)
       self.assertEqual(processed.shape, image.shape)
 
