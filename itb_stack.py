@@ -2138,6 +2138,9 @@ def convert_grayscale_image(image, expr):
   elif name in ["sharpness"]:
     if "adaptive" in params:
       gray_image = compute_sharpness_adaptive(image)
+    elif "raw" in params:
+      gray_image = compute_sharpness_naive(
+        image, base_area=sys.maxsize, blur_radius=0, clahe_clip_limit=0)
     else:
       gray_image = compute_sharpness_naive(image)
     gray_image = normalize_edge_image(gray_image)
