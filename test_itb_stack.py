@@ -30,7 +30,8 @@ from itb_stack import (
   fill_black_margin_image,
   apply_global_histeq_image, apply_clahe_image,
   saturate_colors_image, apply_artistic_filter_image, convert_grayscale_image,
-  bilateral_denoise_image, blur_image_gaussian, blur_image_pyramid, unsharp_image_gaussian,
+  bilateral_denoise_image, blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
+  blur_image_pyramid, unsharp_image_gaussian,
   perspective_correct_image, trim_image, scale_image, apply_vignetting_image, write_caption,
 )
 
@@ -388,6 +389,12 @@ class TestItbStack(unittest.TestCase):
   def test_blur_image_gaussian(self):
     image = generate_test_image()
     processed = blur_image_gaussian(image, 3)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_blur_image_pyramid_up_down_naive(self):
+    image = generate_test_image()
+    processed = pyramid_down_naive(image)
+    processed = pyramid_up_naive(processed)
     self.assertEqual(processed.shape, image.shape)
 
   def test_blur_image_pyramid(self):
