@@ -1536,20 +1536,32 @@ def find_best_rect(tiles, max_window_size=5, size_penalty=0.5):
   return best_rect
 
 
-def find_good_focus_tiles(tiles, size_penalty=0.75):
-  """Finds a good subset of focus tiles that maximize weighted score."""
+def find_good_focus_tiles(tiles, sep_area_balance=0.5, area_penalty=0.75):
+  """Finds a good subset of focus tiles combining variance reduction and size-based score."""
   flat_tiles = [tile for col in tiles for tile in col]
   flat_tiles = sorted(flat_tiles, key=lambda t: t[0], reverse=True)
+  all_scores = [t[0] for t in flat_tiles]
+  total_std = np.std(all_scores)
+  selected_scores = []
+  non_selected_scores = all_scores.copy()
   best_score = -np.inf
-  total_score = 0.0
   best_index = 0
-  for i in range(len(flat_tiles)):
-    total_score += flat_tiles[i][0]
-    avg_score = total_score / (i + 1)
-    weighted_score = avg_score * ((i + 1) ** (1 - size_penalty))
-    if weighted_score > best_score:
-      best_score = weighted_score
-      best_index = i + 1
+  running_total = 0.0
+  for i in range(1, len(flat_tiles)):
+    score_i = non_selected_scores.pop(0)
+    selected_scores.append(score_i)
+    running_total += score_i
+    p = len(selected_scores) / len(all_scores)
+    std_sel = np.std(selected_scores)
+    std_non = np.std(non_selected_scores)
+    split_variance = p * std_sel**2 + (1 - p) * std_non**2
+    variance_gain = 1.0 - split_variance / (total_std**2 + 1e-6)
+    variance_score = variance_gain ** 0.5
+    size_score = (running_total / i) * (i ** (1 - area_penalty))
+    score = sep_area_balance * variance_score + (1 - sep_area_balance) * size_score
+    if score > best_score:
+      best_score = score
+      best_index = i
   return flat_tiles[:best_index]
 
 
