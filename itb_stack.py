@@ -1554,7 +1554,7 @@ def find_good_focus_tiles(tiles, sep_area_balance=0.5, area_penalty=0.75, parity
     var_sel = np.var(selected_scores)
     var_non = np.var(non_selected_scores)
     split_variance = w_sel * var_sel + w_non * var_non
-    variance_gain = 1.0 - split_variance / (total_var + 1e-6)
+    variance_gain = max(0.0, 1.0 - split_variance / (total_var + 1e-6))
     variance_score = variance_gain ** 0.5
     size_score = (running_total / i) * (i ** (1 - area_penalty))
     score = sep_area_balance * variance_score + (1 - sep_area_balance) * size_score
