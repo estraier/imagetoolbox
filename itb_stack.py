@@ -547,6 +547,34 @@ def compute_auto_white_balance_factors(image, edge_weight=0.5, luminance_weight=
   return mean_r, mean_g, mean_b
 
 
+def compute_auto_white_balance_face_factors(image, faces, target_rgb=(1.0, 0.9, 0.8)):
+  """Computes RGB white balance factors to shift face regions toward target skin tone."""
+  r_vals, g_vals, b_vals, weights = [], [], [], []
+  for x, y, w, h in faces:
+    region = image[y:y+h, x:x+w, :]
+    r_mean = float(np.mean(region[:, :, 2]))
+    g_mean = float(np.mean(region[:, :, 1]))
+    b_mean = float(np.mean(region[:, :, 0]))
+    weight = w * h
+    r_vals.append(r_mean * weight)
+    g_vals.append(g_mean * weight)
+    b_vals.append(b_mean * weight)
+    weights.append(weight)
+  if not weights:
+    return 1.0, 1.0, 1.0
+  r_mean = sum(r_vals) / sum(weights)
+  g_mean = sum(g_vals) / sum(weights)
+  b_mean = sum(b_vals) / sum(weights)
+  r_mean /= target_rgb[0]
+  g_mean /= target_rgb[1]
+  b_mean /= target_rgb[2]
+  rgb_max = max(r_mean, g_mean, b_mean, 1e-6)
+  r_mean /= rgb_max
+  g_mean /= rgb_max
+  b_mean /= rgb_max
+  return r_mean, g_mean, b_mean
+
+
 def get_chromaticity_coordinates(kelvin):
   """Returns the chromaticity coordinates for a given color temperature."""
   if kelvin < 4000:
@@ -678,15 +706,23 @@ def adjust_white_balance_image(image, expr="auto"):
   expr = expr.strip().lower()
   params = parse_name_opts_expression(expr)
   name = params["name"]
-  if name in ["auto", "auto-scene", "auto-temp"]:
-    kwargs = {}
-    copy_param_to_kwargs(params, kwargs, "edge_weight", float)
-    copy_param_to_kwargs(params, kwargs, "luminance_weight", float)
-    mean_r, mean_g, mean_b = compute_auto_white_balance_factors(image, **kwargs)
-    if name == "auto-temp":
-      kelvin = convert_rgb_to_kelvin(mean_r, mean_g, mean_b)
-      logger.debug(f"tempelature={kelvin:.0f}K, from={mean_r:.3f},{mean_g:.3f},{mean_b:.3f}")
-      mean_r, mean_g, mean_b = convert_kelvin_to_rgb(kelvin)
+  if name in ["auto", "auto-scene", "auto-temp", "auto-face"]:
+    done = False
+    if name == "auto-face":
+      faces = detect_faces_image(image)
+      if faces:
+        mean_r, mean_g, mean_b = compute_auto_white_balance_face_factors(image, faces)
+        print(mean_r, mean_g, mean_b)
+        done = True
+    if not done:
+      kwargs = {}
+      copy_param_to_kwargs(params, kwargs, "edge_weight", float)
+      copy_param_to_kwargs(params, kwargs, "luminance_weight", float)
+      mean_r, mean_g, mean_b = compute_auto_white_balance_factors(image, **kwargs)
+      if name == "auto-temp":
+        kelvin = convert_rgb_to_kelvin(mean_r, mean_g, mean_b)
+        logger.debug(f"tempelature={kelvin:.0f}K, from={mean_r:.3f},{mean_g:.3f},{mean_b:.3f}")
+        mean_r, mean_g, mean_b = convert_kelvin_to_rgb(kelvin)
     mean_gray = (mean_b + mean_g + mean_r) / 3
     scale_r = mean_gray / max(mean_r, 1e-6)
     scale_g = mean_gray / max(mean_g, 1e-6)
