@@ -62,6 +62,15 @@ def has_command(name):
   return bool(shutil.which(name))
 
 
+def find_file(dir_list, name):
+  """Finds a file of the given name from the given directories."""
+  for directory in dir_list:
+    full_path = os.path.join(directory, name)
+    if os.path.isfile(full_path):
+      return full_path
+  return None
+
+
 def generate_colorbar(width=640, height=480):
   """Generates an image of ARIB-like color bar."""
   img = np.zeros((height, width, 3), dtype=np.uint8)
@@ -1073,8 +1082,8 @@ def align_images_ecc(images, aligned_indices, use_affine=True, denoise=3):
       x_max = np.max(transformed_corners[:, :, 0]).item()
       y_max = np.max(transformed_corners[:, :, 1]).item()
       bounding_boxes.append((int(x_min), int(y_min), int(x_max), int(y_max)))
-    except cv2.error:
-      logger.debug("alignment failed")
+    except cv2.error as e:
+      logger.debug(f"ECC alignment failed: {e}")
       aligned_images.append(image)
   if bounding_boxes:
     x_min = max(min(b[0] for b in bounding_boxes), 0)
@@ -2166,7 +2175,12 @@ def convert_grayscale_image(image, expr):
     color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(color_image, 0, 1)
   elif name in ["face"]:
-    faces = detect_faces_image(image)
+    kwargs = {}
+    if "modes" in params:
+      kwargs["modes"] = re.split(r"[ ,\|:;]+", params["modes"])
+    copy_param_to_kwargs(params, kwargs, "min_area_ratio", float)
+    copy_param_to_kwargs(params, kwargs, "dedup", parse_boolean)
+    faces = detect_faces_image(image, **kwargs)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
     hsv = cv2.merge((h, s / 2, v))
@@ -2236,29 +2250,116 @@ def convert_grayscale_image(image, expr):
   raise ValueError(f"Unknown grayscale name: {name}")
 
 
-def detect_faces_image(image, expand=True, min_area=0.05):
-  """Detects faces in the image and expands to cover full head."""
+def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
+                       min_area_ratio=0.05, dedup=True):
+  """Detects faces in the image."""
   assert image.dtype == np.float32
+  OPENCV_DATA_DIRS = [
+    cv2.data.haarcascades,
+    "/usr/local/share/opencv2",
+    "./models", ".",
+  ]
   h, w = image.shape[:2]
   image_area = h * w
-  gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-  gray_image = np.clip(gray_image, 0, 1)
-  byte_image = (gray_image * 255).astype(np.uint8)
-  face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-  faces = face_cascade.detectMultiScale(byte_image, scaleFactor=1.1, minNeighbors=5)
-  faces = [tuple(int(x) for x in face) for face in faces]
-  faces = [(x for x in face) for face in faces if face[2] * face[3] >= image_area * min_area]
-  if expand:
-    height = image.shape[0]
-    for i in range(len(faces)):
-      x, y, w, h = faces[i]
-      up_expand = int(0.25 * h)
-      down_expand = int(0.1 * h)
-      new_y = max(0, y - up_expand)
-      new_h = min(h + up_expand + down_expand, height - new_y)
-      faces[i] = x, new_y, w, new_h
-  return faces
+  def expand_faces(faces, up_ratio, down_ratio):
+    new_faces = []
+    for fx, fy, fw, fh in faces:
+      up_expand = int(up_ratio * fh)
+      down_expand = int(down_ratio * fh)
+      new_y = max(0, fy - up_expand)
+      new_h = min(fh + up_expand + down_expand, h - new_y)
+      new_faces.append((fx, new_y, fw, new_h))
+    return new_faces
+  def get_faces_haar(model_filename, flip=False, expand=True):
+    scale = 1.0
+    base_area = 400000
+    if image_area > base_area * 2:
+      scale = (base_area / image_area) ** 0.5
+      small_w, small_h = int(w * scale), int(h * scale)
+      small_image = cv2.resize(image, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    else:
+      small_image = image
+    gray_image = cv2.cvtColor(small_image, cv2.COLOR_BGR2GRAY)
+    gray_image = np.clip(gray_image, 0, 1)
+    byte_image = (gray_image * 255).astype(np.uint8)
+    model_path = find_file(OPENCV_DATA_DIRS, model_filename)
+    if not model_path:
+      logger.warning(f"missing model file: {model_filename}")
+      return []
+    face_cascade = cv2.CascadeClassifier(model_path)
+    raw_faces = face_cascade.detectMultiScale(byte_image, scaleFactor=1.1, minNeighbors=5)
+    faces = [tuple(int(x / scale) for x in face) for face in raw_faces]
+    if expand:
+      faces = expand_faces(faces, 0.2, 0.1)
+    if flip:
+      flipped_byte_image = cv2.flip(byte_image, 1)
+      raw_faces_flip = face_cascade.detectMultiScale(
+        flipped_byte_image, scaleFactor=1.1, minNeighbors=5)
+      faces_flip = []
+      for (x, y, fw, fh) in raw_faces_flip:
+        x = byte_image.shape[1] - (x + fw)
+        faces_flip.append((int(x / scale), int(y / scale), int(fw / scale), int(fh / scale)))
+      if expand:
+        faces_flip = expand_faces(faces_flip, 0.2, 0.1)
+      faces += faces_flip
+    return [(0.3 * (fw * fh), (fx, fy, fw, fh)) for fx, fy, fw, fh in faces]
+  def get_faces_dnn():
+    byte_image = (image * 255).astype(np.uint8)
+    blob = cv2.dnn.blobFromImage(byte_image, scalefactor=1.0, size=(300, 300),
+                                 mean=(104.0, 177.0, 123.0), swapRB=False, crop=False)
+    try:
+      deploy_path = find_file(OPENCV_DATA_DIRS, "dnn-deploy.prototxt")
+      model_path = find_file(OPENCV_DATA_DIRS, "res10_300x300_ssd_iter_140000.caffemodel")
+      if not deploy_path or not model_path:
+        logger.warning(f"missing DNN model file")
+        return []
+      net = cv2.dnn.readNetFromCaffe(deploy_path, model_path)
+    except cv2.error as e:
+      logger.warning(f"DNN detection failed: {e}")
+      return []
+    net.setInput(blob)
+    detections = net.forward()
+    faces = []
+    for i in range(detections.shape[2]):
+      confidence = detections[0, 0, i, 2]
+      if confidence > 0.5:
+        box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+        x1, y1, x2, y2 = box.astype(int)
+        box_w, box_h = x2 - x1, y2 - y1
+        area = box_w * box_h
+        score = max(0.0, (confidence - 0.5) * 2) * area
+        faces.append((score, (x1, y1, box_w, box_h)))
+    return faces
+  face_scores = []
+  for mode in modes:
+    if mode == "frontal":
+      face_scores.extend(get_faces_haar("haarcascade_frontalface_default.xml"))
+    elif mode == "profile":
+      face_scores.extend(get_faces_haar("haarcascade_profileface.xml", flip=True, expand=False))
+    elif mode == "fullbody":
+      face_scores.extend(get_faces_haar("haarcascade_fullbody.xml"))
+    elif mode == "upperbody":
+      face_scores.extend(get_faces_haar("haarcascade_upperbody.xml"))
+    elif mode == "dnn":
+      face_scores.extend(get_faces_dnn())
+    else:
+      raise ValueError(f"invalid face detection mode '{mode}'")
+  face_scores = [item for item in face_scores
+                 if item[1][2] * item[1][3] >= image_area * min_area_ratio]
+  face_scores.sort(key=lambda x: x[0], reverse=True)
+  final_faces = []
+  if dedup:
+    used_mask = np.zeros((h, w), dtype=np.uint8)
+    final_faces = []
+    for _, (x, y, fw, fh) in face_scores:
+      if np.any(used_mask[y:y+fh, x:x+fw]):
+        continue
+      used_mask[y:y+fh, x:x+fw] = 1
+      final_faces.append((x, y, fw, fh))
+    return final_faces
+  else:
+    final_faces = [face for _, face in face_scores]
+  return final_faces
 
 
 def convert_image_lcs(image):
@@ -3030,7 +3131,7 @@ def main():
   logger.info(f"Process started: input={args.inputs}, output={args.output}")
   for path in args.inputs:
     if not os.path.exists(path):
-      ValueError(f"{path} doesn't exist")
+      raise ValueError(f"{path} doesn't exist")
   logger.info(f"Loading the input files")
   images_data = load_input_images(args)
   images, bits_list = zip(*images_data)
