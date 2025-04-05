@@ -2261,16 +2261,20 @@ def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
   ]
   h, w = image.shape[:2]
   image_area = h * w
-  def expand_faces(faces, up_ratio, down_ratio):
+  def expand_faces(faces, up_ratio, right_ratio, down_ratio, left_ratio):
     new_faces = []
     for fx, fy, fw, fh in faces:
-      up_expand = int(up_ratio * fh)
-      down_expand = int(down_ratio * fh)
+      left_expand = int(left_ratio * fw)
+      right_expand = int(right_ratio * fw)
+      new_x = max(0, fx - left_expand)
+      new_w = min(fw + left_expand + right_expand, w - new_x)
+      up_expand = int(0.1 * fh)
+      down_expand = int(0.05 * fh)
       new_y = max(0, fy - up_expand)
       new_h = min(fh + up_expand + down_expand, h - new_y)
-      new_faces.append((fx, new_y, fw, new_h))
+      new_faces.append((new_x, new_y, new_w, new_h))
     return new_faces
-  def get_faces_haar(model_filename, flip=False, expand=True):
+  def get_faces_haar(model_filename, flip=False, expand=None):
     scale = 1.0
     base_area = 400000
     if image_area > base_area * 2:
@@ -2290,7 +2294,7 @@ def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
     raw_faces = face_cascade.detectMultiScale(byte_image, scaleFactor=1.1, minNeighbors=5)
     faces = [tuple(int(x / scale) for x in face) for face in raw_faces]
     if expand:
-      faces = expand_faces(faces, 0.2, 0.1)
+      faces = expand_faces(faces, *expand)
     if flip:
       flipped_byte_image = cv2.flip(byte_image, 1)
       raw_faces_flip = face_cascade.detectMultiScale(
@@ -2300,10 +2304,10 @@ def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
         x = byte_image.shape[1] - (x + fw)
         faces_flip.append((int(x / scale), int(y / scale), int(fw / scale), int(fh / scale)))
       if expand:
-        faces_flip = expand_faces(faces_flip, 0.2, 0.1)
+        faces_flip = expand_faces(faces_flip, *expand)
       faces += faces_flip
     return [(0.3 * (fw * fh), (fx, fy, fw, fh)) for fx, fy, fw, fh in faces]
-  def get_faces_dnn():
+  def get_faces_dnn(expand=None):
     byte_image = (image * 255).astype(np.uint8)
     blob = cv2.dnn.blobFromImage(byte_image, scalefactor=1.0, size=(300, 300),
                                  mean=(104.0, 177.0, 123.0), swapRB=False, crop=False)
@@ -2329,19 +2333,25 @@ def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
         area = box_w * box_h
         score = max(0.0, (confidence - 0.5) * 2) * area
         faces.append((score, (x1, y1, box_w, box_h)))
+    if expand:
+      scores, boxes = zip(*faces)
+      boxes = expand_faces(boxes, *expand)
+      faces = [(s, (x, y, w, h)) for s, (x, y, w, h) in zip(scores, boxes)]
     return faces
   face_scores = []
   for mode in modes:
     if mode == "frontal":
-      face_scores.extend(get_faces_haar("haarcascade_frontalface_default.xml"))
+      face_scores.extend(get_faces_haar("haarcascade_frontalface_default.xml",
+                                        expand=(0.2, 0, 0.1, 0)))
     elif mode == "profile":
-      face_scores.extend(get_faces_haar("haarcascade_profileface.xml", flip=True, expand=False))
+      face_scores.extend(get_faces_haar("haarcascade_profileface.xml",
+                                        flip=True, expand=(0.2, 0, 0.1, 0)))
     elif mode == "fullbody":
       face_scores.extend(get_faces_haar("haarcascade_fullbody.xml"))
     elif mode == "upperbody":
       face_scores.extend(get_faces_haar("haarcascade_upperbody.xml"))
     elif mode == "dnn":
-      face_scores.extend(get_faces_dnn())
+      face_scores.extend(get_faces_dnn(expand=(0.2, 0.1, 0.1, 0.1)))
     else:
       raise ValueError(f"invalid face detection mode '{mode}'")
   face_scores = [item for item in face_scores
