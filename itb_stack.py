@@ -71,6 +71,13 @@ def find_file(dir_list, name):
   return None
 
 
+def generate_blank(width=640, height=480, color=(0.5, 0.5, 0.5)):
+  """Generates a blank image."""
+  color = color[2], color[1], color[0]
+  image = np.full((height, width, 3), color, dtype=np.float32)
+  return image
+
+
 def generate_colorbar(width=640, height=480):
   """Generates an image of ARIB-like color bar."""
   img = np.zeros((height, width, 3), dtype=np.uint8)
@@ -2868,7 +2875,7 @@ def write_caption(image, capexpr):
   font = cv2.FONT_HERSHEY_SIMPLEX
   font_ratio = 1.0
   if len(fields) > 1:
-    match = re.fullmatch(r" *(\d+\.\d*) *", fields[1])
+    match = re.fullmatch(r" *(\d+(\.\d*)?) *", fields[1])
     if match:
       font_ratio = float(match.group(1))
   font_scale = 0.002 * np.sqrt(h * w) * font_ratio
@@ -3100,7 +3107,8 @@ def make_ap_args():
                   help="apply an artistic filter: pencil, stylized, oil, cartoon")
   ap.add_argument("--gray", default="", metavar="text",
                   help="convert to grayscale: bt601, bt709, bt2020,"
-                  " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel")
+                  " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel,"
+                  " stddev, sharpness, face, focus, lcs, grabcut")
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
                   help="apply bilateral denoise by the pixel radius.")
   ap.add_argument("--blur", default="0", metavar="num",
@@ -3220,11 +3228,22 @@ def load_input_images(args):
   for input_path in args.inputs:
     ext = os.path.splitext(input_path)[1].lower()
     mem_allowance = limit_mem_size - total_mem_size
-    match = re.fullmatch(r"\[([a-z]+?)(:.*)?\]", input_path)
+    match = re.fullmatch(r"\[([a-z].*)+\]", input_path)
     if match:
-      name = match.group(1).lower()
-      if name == "colorbar":
-        image = generate_colorbar()
+      ctl_params = parse_name_opts_expression(match.group(1))
+      name = ctl_params["name"]
+      if name == "blank":
+        kwargs = {}
+        copy_param_to_kwargs(ctl_params, kwargs, "width", int)
+        copy_param_to_kwargs(ctl_params, kwargs, "height", int)
+        copy_param_to_kwargs(ctl_params, kwargs, "color", parse_color_expr)
+        image = generate_blank(**kwargs)
+        bits = 8
+      elif name == "colorbar":
+        kwargs = {}
+        copy_param_to_kwargs(ctl_params, kwargs, "width", int)
+        copy_param_to_kwargs(ctl_params, kwargs, "height", int)
+        image = generate_colorbar(**kwargs)
         bits = 8
       else:
         raise ValueError(f"Unsupported image generation: {name}")

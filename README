@@ -253,4 +253,11 @@ For unit testing, run the following command.
 
   $ ./test_itb_stack.py
 
+For manual testing, "[blank]" and "[colorbar]" special input names are useful.
+
+  $ itb_stack.py "[blank:width=1000:height=300:color=black]" --caption "one|8|white" -o 1.jpg
+  $ itb_stack.py "[blank:width=1000:height=300:color=black]" --caption "two|8|white" -o 2.jpg
+  $ itb_stack.py "[colorbar:width=1000:height=300]" --caption "END|8|black" -o 3.jpg
+  $ itb_stack.py 1.jpg 2.jpg 3.jpg -o movie.mp4
+
 == END OF FILE ==
