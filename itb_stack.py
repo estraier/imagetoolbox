@@ -2333,7 +2333,7 @@ def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
         area = box_w * box_h
         score = max(0.0, (confidence - 0.5) * 2) * area
         faces.append((score, (x1, y1, box_w, box_h)))
-    if expand:
+    if expand and faces:
       scores, boxes = zip(*faces)
       boxes = expand_faces(boxes, *expand)
       faces = [(s, (x, y, w, h)) for s, (x, y, w, h) in zip(scores, boxes)]
@@ -3140,6 +3140,7 @@ def main():
                f" OpenCV={cv2.__version__}, NumPy={np.__version__}")
   logger.info(f"Process started: input={args.inputs}, output={args.output}")
   for path in args.inputs:
+    if re.fullmatch(r"\[.*\]", path): continue
     if not os.path.exists(path):
       raise ValueError(f"{path} doesn't exist")
   logger.info(f"Loading the input files")
