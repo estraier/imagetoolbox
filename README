@@ -20,6 +20,15 @@ Optionally, those tools can be executed implicitly.
 
   ExifTool
 
+Optionally, HEIC/HEIF input is supported if you install this library.
+
+  $ pip3 install pillow_heif
+
+Optionally, face detection is enhanced if you install DNN model files.
+
+  $ sudo mkdir -p /usr/local/share/opencv2
+  $ sudo cp models/* /usr/local/share/opencv2
+
 ----------------
 
 itb_stack.py : Stack and merge images into one.

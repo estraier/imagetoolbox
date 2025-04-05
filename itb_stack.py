@@ -2296,7 +2296,7 @@ def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
     byte_image = (gray_image * 255).astype(np.uint8)
     model_path = find_file(OPENCV_DATA_DIRS, model_filename)
     if not model_path:
-      logger.warning(f"missing model file: {model_filename}")
+      logger.debug(f"missing model file: {model_filename}")
       return []
     face_cascade = cv2.CascadeClassifier(model_path)
     raw_faces = face_cascade.detectMultiScale(byte_image, scaleFactor=1.1, minNeighbors=5)
@@ -2323,7 +2323,7 @@ def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
       deploy_path = find_file(OPENCV_DATA_DIRS, "dnn-deploy.prototxt")
       model_path = find_file(OPENCV_DATA_DIRS, "res10_300x300_ssd_iter_140000.caffemodel")
       if not deploy_path or not model_path:
-        logger.warning(f"missing DNN model file")
+        logger.debug(f"missing DNN model file")
         return []
       net = cv2.dnn.readNetFromCaffe(deploy_path, model_path)
     except cv2.error as e:
