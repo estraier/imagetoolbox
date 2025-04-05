@@ -2291,6 +2291,7 @@ def detect_faces_image(image, modes=["frontal", "profile", "dnn"],
     else:
       small_image = image
     gray_image = cv2.cvtColor(small_image, cv2.COLOR_BGR2GRAY)
+    gray_image = apply_clahe_gray_image(gray_image, 0.3)
     gray_image = np.clip(gray_image, 0, 1)
     byte_image = (gray_image * 255).astype(np.uint8)
     model_path = find_file(OPENCV_DATA_DIRS, model_filename)
