@@ -29,7 +29,7 @@ from itb_stack import (
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
   fill_black_margin_image,
   apply_global_histeq_image, apply_clahe_image, apply_artistic_filter_image,
-  saturate_colors_image, convert_grayscale_image,
+  saturate_colors_image, optimize_exposure_image, convert_grayscale_image,
   bilateral_denoise_image, blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
   blur_image_pyramid, unsharp_image_gaussian,
   perspective_correct_image, trim_image, scale_image, apply_vignetting_image, write_caption,
@@ -374,6 +374,16 @@ class TestItbStack(unittest.TestCase):
     processed = saturate_colors_image(image, -3)
     self.assertEqual(processed.shape, image.shape)
 
+  def test_optimize_exposure_face_gamma(self):
+    image = generate_test_image()
+    processed = optimize_exposure_image(image, 0.5, mask="face", gamma_scale=3.2)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_optimize_exposure_oval_log(self):
+    image = generate_test_image()
+    processed = optimize_exposure_image(image, 0.5, mask="oval", log_scale=29)
+    self.assertEqual(processed.shape, image.shape)
+
   def test_convert_grayscale_image(self):
     image = generate_test_image()
     for name in ["bt601", "lab", "hsv", "hsl", "laplacian", "sobel",
@@ -524,3 +534,6 @@ if __name__ == "__main__":
   if "-v" in sys.argv:
     set_logging_level(logging.DEBUG)
   unittest.main()
+
+
+# END OF FILE

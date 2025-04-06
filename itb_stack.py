@@ -406,7 +406,7 @@ def copy_metadata(source_path, target_path):
 
 
 def srgb_to_linear(image):
-  """Converts sRGB to linear RGB using OpenCV (optimized for float32)."""
+  """Converts sRGB to linear RGB using OpenCV."""
   assert image.dtype == np.float32
   image = np.where(image <= 0.04045,
                    image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
@@ -414,7 +414,7 @@ def srgb_to_linear(image):
 
 
 def linear_to_srgb(image):
-  """Converts linear RGB to sRGB using OpenCV (optimized for float32)."""
+  """Converts linear RGB to sRGB using OpenCV."""
   assert image.dtype == np.float32
   image = np.where(image <= 0.0031308,
                    image * 12.92, 1.055 * cv2.pow(image, 1/2.4) - 0.055)
@@ -2116,6 +2116,165 @@ def apply_artistic_filter_image(image, name):
   return image
 
 
+def generate_oval_mask(image, center, reach, decay):
+  """Generates an oval mask using reach from center toward corners."""
+  assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  cx = center[0] * w
+  cy = center[1] * h
+  top_left = (cx * (1 - reach), cy * (1 - reach))
+  top_right = (cx + (w - cx) * reach, cy * (1 - reach))
+  bottom_right = (cx + (w - cx) * reach, cy + (h - cy) * reach)
+  bottom_left = (cx * (1 - reach), cy + (h - cy) * reach)
+  x0 = min(top_left[0], bottom_left[0])
+  x1 = max(top_right[0], bottom_right[0])
+  y0 = min(top_left[1], top_right[1])
+  y1 = max(bottom_left[1], bottom_right[1])
+  rx = (x1 - x0) / 2
+  ry = (y1 - y0) / 2
+  cx = (x0 + x1) / 2
+  cy = (y0 + y1) / 2
+  y, x = np.ogrid[:h, :w]
+  dx = (x - cx) / rx
+  dy = (y - cy) / ry
+  dist = np.sqrt(dx**2 + dy**2)
+  mask = np.zeros((h, w), dtype=np.float32)
+  decay = np.clip(decay, 1e-6, 1.0)
+  r_inner = 1.0 - decay
+  mask[dist <= r_inner] = 1.0
+  fade = (dist > r_inner) & (dist <= 1.0)
+  mask[fade] = 1.0 - (dist[fade] - r_inner) / decay
+  return np.clip(mask, 0, 1)
+
+
+def generate_rect_mask(image, center, reach, decay):
+  """Generates a rectangular mask with linear decay inside the rectangle."""
+  assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  cx = int(w * center[0])
+  cy = int(h * center[1])
+  tlx = int(cx * (1 - reach))
+  tly = int(cy * (1 - reach))
+  brx = int(cx + (w - cx) * reach)
+  bry = int(cy + (h - cy) * reach)
+  mask = np.zeros((h, w), dtype=np.float32)
+  rect_w = brx - tlx
+  rect_h = bry - tly
+  decay = np.clip(decay, 1e-6, 1.0)
+  decay_w = decay * rect_w / 2
+  decay_h = decay * rect_h / 2
+  y_indices, x_indices = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
+  dx = np.zeros((h, w), dtype=np.float32)
+  dx_region = (x_indices >= tlx) & (x_indices <= brx)
+  dx_vals = np.ones_like(dx)
+  left = x_indices < (tlx + decay_w)
+  right = x_indices > (brx - decay_w)
+  dx_vals[left] = (x_indices[left] - tlx) / decay_w
+  dx_vals[right] = (brx - x_indices[right]) / decay_w
+  dx[dx_region] = np.clip(dx_vals[dx_region], 0, 1)
+  dy = np.zeros((h, w), dtype=np.float32)
+  dy_region = (y_indices >= tly) & (y_indices <= bry)
+  dy_vals = np.ones_like(dy)
+  top = y_indices < (tly + decay_h)
+  bottom = y_indices > (bry - decay_h)
+  dy_vals[top] = (y_indices[top] - tly) / decay_h
+  dy_vals[bottom] = (bry - y_indices[bottom]) / decay_h
+  dy[dy_region] = np.clip(dy_vals[dy_region], 0, 1)
+  mask = np.minimum(dx, dy)
+  return mask
+
+
+def generate_rect_face(image, decay=0.3, expand_ratio=0.1):
+  """Generates a mask which covers faces in oval regions with linear decay."""
+  assert image.dtype == np.float32
+  h, w = image.shape[:2]
+  mask = np.zeros((h, w), dtype=np.float32)
+  faces = detect_faces_image(image)
+  for fx, fy, fw, fh in faces:
+    ex = int(fw * expand_ratio)
+    ey = int(fh * expand_ratio)
+    x0 = max(fx - ex, 0)
+    y0 = max(fy - ey, 0)
+    x1 = min(fx + fw + ex, w)
+    y1 = min(fy + fh + ey, h)
+    rw = x1 - x0
+    rh = y1 - y0
+    cx = x0 + rw / 2
+    cy = y0 + rh / 2
+    y_grid, x_grid = np.ogrid[y0:y1, x0:x1]
+    norm_x = (x_grid - cx) / (rw / 2)
+    norm_y = (y_grid - cy) / (rh / 2)
+    dist = np.sqrt(norm_x**2 + norm_y**2)
+    inner_ratio = 1.0 - decay
+    fade_mask = np.zeros((rh, rw), dtype=np.float32)
+    fade_mask[dist <= inner_ratio] = 1.0
+    fade_zone = (dist > inner_ratio) & (dist <= 1.0)
+    fade_mask[fade_zone] = 1.0 - (dist[fade_zone] - inner_ratio) / decay
+    mask[y0:y1, x0:x1] = np.maximum(mask[y0:y1, x0:x1], fade_mask)
+  return np.clip(mask, 0, 1)
+
+
+def find_best_slog_factor(image, mask, bins=64, gamma_scale=None, log_scale=None):
+  """Finds the best scaled log factor to enhance visibility."""
+  assert image.dtype == np.float32
+  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  h, w = gray.shape[:2]
+  image_area = h * w
+  base_area = 10000
+  if image_area > base_area * 2:
+    scale = (base_area / image_area) ** 0.5
+    small_w, small_h = int(w * scale), int(h * scale)
+    gray = cv2.resize(gray, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    mask = cv2.resize(mask, (small_w, small_h), interpolation=cv2.INTER_AREA)
+  slog_pos = [round(0.25 * (2 ** (i * 0.5)), 2) for i in range(13)]
+  slog_candidates = [-x for x in reversed(slog_pos)] + [0.0] + slog_pos
+  best_score = -float("inf")
+  best_factor = 0.0
+  for factor in slog_candidates:
+    scaled = apply_scaled_log_image(gray, factor)
+    if gamma_scale:
+      perceived = np.power(scaled, 1 / gamma_scale)
+    elif log_scale:
+      perceived = np.log1p(scaled * log_scale) / np.log1p(log_scale)
+    else:
+      perceived = scaled
+    hist, _ = np.histogram(perceived, bins=bins, range=(0.0, 1.0), weights=mask)
+    hist = hist[hist > 0]
+    hist = hist / np.sum(hist)
+    entropy = -np.sum(hist * np.log(hist))
+    if entropy > best_score:
+      best_score = entropy
+      best_factor = factor
+  return best_factor
+
+
+def optimize_exposure_image(image, strength, upper_pecentile=99, mask="face",
+                            mask_center=(0.5, 0.5), mask_reach=0.9, mask_decay=0.3,
+                            gamma_scale=3.0, log_scale=None):
+  """Optimizes exposure of the image automatically."""
+  upper = np.percentile(image, upper_pecentile)
+  upper = upper + (1.0 - upper) * (1.0 - strength)
+  image = np.clip(image / upper, 0, 1)
+  h, w = image.shape[:2]
+  if mask == "oval":
+    mask_image = generate_oval_mask(image, mask_center, mask_reach, mask_decay)
+  elif mask == "rect":
+    mask_image = generate_rect_mask(image, mask_center, mask_reach, mask_decay)
+  elif mask == "face":
+    mask_image = generate_rect_face(image, mask_decay)
+    if np.max(mask_image) == 0:
+      mask_image = generate_oval_mask(image, mask_center, mask_reach, mask_decay)
+  elif mask == "grabcut":
+    mask_image = compute_focus_grabcut(image, attractor=mask_center)
+  else:
+    raise ValueError(f"Unknown mask name: {mask}")
+  slog = find_best_slog_factor(
+    image, mask_image, gamma_scale=gamma_scale, log_scale=log_scale) * strength
+  logger.debug(f"optimize exposure slog: {slog:.2f}")
+  image = apply_scaled_log_image(image, slog)
+  return np.clip(image, 0, 1)
+
+
 def convert_grayscale_image(image, expr):
   """Converts the image into grayscale."""
   assert image.dtype == np.float32
@@ -3131,6 +3290,8 @@ def make_ap_args():
                   help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--art", default="", metavar="text",
                   help="apply an artistic filter: pencil, stylized, oil, cartoon")
+  ap.add_argument("--optimize-exposure", "-ox", default="0", metavar="num",
+                  help="optimize exposure automatically. 1 for perfect exposure")
   ap.add_argument("--gamma", type=float, default=1.0, metavar="num",
                   help="gamma brightness adjustment."
                   " less than 1.0 to darken, less than 1.0 to lighten")
@@ -3196,7 +3357,7 @@ def main():
     log_image_stats(images[0][0], "first")
   brightness_values = np.array([compute_brightness(image) for image in images])
   mean_brightness = np.mean(brightness_values)
-  logger.debug(f"mean_brightness={mean_brightness:.3f}")
+  logger.debug(f"mean brightness={mean_brightness:.3f}")
   if args.white_balance and args.white_balance != "none":
     logger.info(f"Adjusting white balance")
     images = [adjust_white_balance_image(image, args.white_balance) for image in images]
@@ -3491,6 +3652,11 @@ def edit_image(image, args):
   if args.art and args.gray != "none":
     logger.info(f"Applying an artistic filter")
     image = apply_artistic_filter_image(image, args.art)
+  optex_params = parse_num_opts_expression(args.optimize_exposure)
+  optex_num = optex_params["num"]
+  if optex_num > 0:
+    logger.info(f"Optimizing exposure automatically")
+    image = optimize_exposure_image(image, optex_num)
   if args.gamma != 1.0 and args.gamma > 0:
     logger.info(f"Adjust brightness by a gamma")
     image = apply_gamma_image(image, args.gamma)
@@ -3574,3 +3740,6 @@ def edit_image(image, args):
 
 if __name__ == "__main__":
   main()
+
+
+# END OF FILE

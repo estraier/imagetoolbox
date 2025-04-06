@@ -75,6 +75,10 @@ input images.  If you calibrate brightness yourself, suppress the auto adjustmen
 
   $ itb_stack.py input*.jpg -o output.jpg -nr
 
+If this tool can optimize exposure automatically by maximizing entropy of luminace of the subject.
+
+  $ itb_stack.py input*.jpg -o output.jpg -ox
+
 You can adjust brightness and contrast of the merged image manually.  If an option parameter
 starts with "-", use "=" as the separator.
 
@@ -183,10 +187,12 @@ The workflow of this command is the following.
   7: Brightness of the merged image is adjusted to the input average.
        use -nr or --no-restore to disable it.
   8: Optionally, various postprocessing methods are applied.
+       --histeq to apply histgram equalization
        --gamma to modify brightness by a gamma function
        --slog to modify brightness by a scaled logarithmic function
        --sigmoid to adjust contrast by a scaled sigmoid function
-       --histeq to apply histgram equalization
+       --saturate to adjust saturation by a scaled logarithmic function
+       --optimize-exposure to adjust exposure automatically
        --denoise, --blur, --unsharp, --portrait to adjust noise/bokeh/sharpness
        --trim, --pers, --scale to change geometry
        --vignetting, --caption to apply finishing touches
