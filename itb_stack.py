@@ -2054,25 +2054,6 @@ def apply_clahe_image(image, clip_limit, gamma=2.2, white_level=245, restore_col
   return np.clip(enhanced_image, 0, 1)
 
 
-def saturate_colors_image(image, factor):
-  """Saturates colors of the image by applying a scaled log transformation."""
-  assert image.dtype == np.float32
-  if factor > 1e-6:
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    s = (np.log1p(s * factor) / np.log1p(factor)).astype(np.float32)
-    hsv = cv2.merge((h, s, v))
-    mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-  elif factor < -1e-6:
-    factor = -factor
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    s = ((np.expm1(s * np.log1p(factor))) / factor).astype(np.float32)
-    hsv = cv2.merge((h, s, v))
-    mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-  return mod_image.astype(np.float32)
-
-
 def apply_artistic_filter_image(image, name):
   """Applies an artistic filter."""
   assert image.dtype == np.float32
@@ -2455,6 +2436,25 @@ def convert_image_lcs_tricolor(image):
   hls_combined = cv2.merge([new_h, new_l, new_s])
   rgb_restored = cv2.cvtColor(hls_combined, cv2.COLOR_HLS2BGR)
   return np.clip(rgb_restored, 0, 1)
+
+
+def saturate_colors_image(image, factor):
+  """Saturates colors of the image by applying a scaled log transformation."""
+  assert image.dtype == np.float32
+  if factor > 1e-6:
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    s = (np.log1p(s * factor) / np.log1p(factor)).astype(np.float32)
+    hsv = cv2.merge((h, s, v))
+    mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+  elif factor < -1e-6:
+    factor = -factor
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    s = ((np.expm1(s * np.log1p(factor))) / factor).astype(np.float32)
+    hsv = cv2.merge((h, s, v))
+    mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+  return mod_image.astype(np.float32)
 
 
 def center_rect(rect, center, area_ratio):
@@ -3127,6 +3127,10 @@ def make_ap_args():
                   help="do not apply auto restoration of brightness")
   ap.add_argument("--fill-margin", "-fm", action='store_true',
                   help="fill black marin with the color of nearest pixels")
+  ap.add_argument("--histeq", default="0", metavar="num",
+                  help="apply histogram equalization by the clip limit. negative means global")
+  ap.add_argument("--art", default="", metavar="text",
+                  help="apply an artistic filter: pencil, stylized, oil, cartoon")
   ap.add_argument("--gamma", type=float, default=1.0, metavar="num",
                   help="gamma brightness adjustment."
                   " less than 1.0 to darken, less than 1.0 to lighten")
@@ -3136,12 +3140,8 @@ def make_ap_args():
   ap.add_argument("--sigmoid", default="0", metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
-  ap.add_argument("--histeq", default="0", metavar="num",
-                  help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--saturate", type=float, default=0, metavar="num",
                   help="saturate colors. positive for vivid, negative for muted")
-  ap.add_argument("--art", default="", metavar="text",
-                  help="apply an artistic filter: pencil, stylized, oil, cartoon")
   ap.add_argument("--gray", default="", metavar="text",
                   help="convert to grayscale: bt601, bt709, bt2020,"
                   " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel,"
@@ -3364,110 +3364,6 @@ def log_image_stats(image, prefix):
                f" stddev={stddev:.3f}, skew={skew:.3f}, kurt={kurt:.3f}, nan={has_nan}")
 
 
-def edit_image(image, args):
-  """Edits an image."""
-  assert image.dtype == np.float32
-  if args.fill_margin:
-    logger.info(f"Filling the margin")
-    image = fill_black_margin_image(image)
-  if args.gamma != 1.0 and args.gamma > 0:
-    logger.info(f"Adjust brightness by a gamma")
-    image = apply_gamma_image(image, args.gamma)
-  if args.slog != 0:
-    logger.info(f"Adjust brightness by a scaled log")
-    image = apply_scaled_log_image(image, args.slog)
-  sigmoid_params = parse_num_opts_expression(args.sigmoid)
-  sigmoid_num = sigmoid_params["num"]
-  if sigmoid_num != 0:
-    logger.info(f"Adjust brightness by a sigmoid")
-    kwargs = {}
-    copy_param_to_kwargs(sigmoid_params, kwargs, "mid", float)
-    image = apply_sigmoid_image(image, sigmoid_num, **kwargs)
-  histeq_params = parse_num_opts_expression(args.histeq)
-  histeq_num = histeq_params["num"]
-  if histeq_num > 0:
-    logger.info(f"Applying CLAHE enhancement")
-    kwargs = {}
-    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
-    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
-    image = apply_clahe_image(image, histeq_num, **kwargs)
-  elif histeq_num < 0:
-    logger.info(f"Applying global HE enhancement")
-    kwargs = {}
-    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
-    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
-    image = apply_global_histeq_image(image, **kwargs)
-  if args.saturate != 0:
-    logger.info(f"Saturating colors")
-    image = saturate_colors_image(image, args.saturate)
-  if args.art and args.gray != "none":
-    logger.info(f"Applying an artistic filter")
-    image = apply_artistic_filter_image(image, args.art)
-  if args.gray and args.gray != "none":
-    logger.info(f"Converting to grayscale")
-    image = convert_grayscale_image(image, args.gray)
-  if args.denoise > 0:
-    logger.info(f"Applying birateral denoise")
-    image = bilateral_denoise_image(image, args.denoise)
-  blur_params = parse_num_opts_expression(args.blur)
-  blur_num = blur_params["num"]
-  if blur_num > 0:
-    logger.info(f"Applying Gaussian blur")
-    image = blur_image_gaussian(image, blur_num)
-  if blur_num < 0:
-    logger.info(f"Applying Pyramid blur")
-    kwargs = {}
-    copy_param_to_kwargs(blur_params, kwargs, "decay", float)
-    copy_param_to_kwargs(blur_params, kwargs, "contrast", float)
-    image = blur_image_pyramid(image, int(blur_num) * -1, **kwargs)
-  portrait_params = parse_name_opts_expression(args.portrait)
-  portrait_name = portrait_params["name"]
-  if portrait_name == "auto":
-    portrait_name = str(compute_levels_blur_image_portrait(image))
-  portrait_levels = int(portrait_name)
-  if portrait_levels != 0:
-    kwargs = {}
-    copy_param_to_kwargs(portrait_params, kwargs, "decay", float)
-    copy_param_to_kwargs(portrait_params, kwargs, "contrast", float)
-    copy_param_to_kwargs(portrait_params, kwargs, "edge_threshold", float)
-    copy_param_to_kwargs(portrait_params, kwargs, "bokeh_balance", float)
-    copy_param_to_kwargs(portrait_params, kwargs, "repeat", int)
-    copy_param_to_kwargs(portrait_params, kwargs, "grabcut", float)
-    copy_param_to_kwargs(portrait_params, kwargs, "attractor", parse_coordinate)
-    copy_param_to_kwargs(portrait_params, kwargs, "attractor_weight", float)
-    copy_param_to_kwargs(portrait_params, kwargs, "finish_edge", float)
-    logger.info(f"Applying portrait blur by {portrait_levels} levels")
-    image = blur_image_portrait(image, portrait_levels, **kwargs)
-  if args.unsharp > 0:
-    logger.info(f"Applying Gaussian unsharp mask")
-    image = unsharp_image_gaussian(image, args.unsharp)
-  trim_params = parse_trim_expression(args.trim)
-  if trim_params:
-    logger.info(f"Trimming the image")
-    image = trim_image(image, *trim_params)
-  pers_params = parse_pers_expression(args.pers)
-  if pers_params:
-    logger.info(f"Doing perspective correction of the image")
-    image = perspective_correct_image(image, *pers_params)
-  scale_params = parse_scale_expression(args.scale)
-  if scale_params:
-    logger.info(f"Scaling the image")
-    if scale_params[1] is None:
-      scale_params = get_scaled_image_size(image, scale_params[0])
-    image = scale_image(image, *scale_params)
-  vignetting_params = parse_num_opts_expression(args.vignetting)
-  vignetting_num = vignetting_params["num"]
-  if vignetting_num != 0:
-    kwargs = {}
-    copy_param_to_kwargs(vignetting_params, kwargs, "cx", float)
-    copy_param_to_kwargs(vignetting_params, kwargs, "cy", float)
-    image = apply_vignetting_image(image, vignetting_num, **kwargs)
-  if len(args.caption) > 0:
-    logger.info(f"Writing the caption")
-    image = write_caption(image, args.caption)
-  return image
-
-
 def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   """Postprocesses images as a merged image."""
   assert all(image.dtype == np.float32 for image in images)
@@ -3570,6 +3466,110 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
     copy_metadata(args.inputs[0], args.output)
+
+
+def edit_image(image, args):
+  """Edits an image."""
+  assert image.dtype == np.float32
+  if args.fill_margin:
+    logger.info(f"Filling the margin")
+    image = fill_black_margin_image(image)
+  histeq_params = parse_num_opts_expression(args.histeq)
+  histeq_num = histeq_params["num"]
+  if histeq_num > 0:
+    logger.info(f"Applying CLAHE enhancement")
+    kwargs = {}
+    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
+    image = apply_clahe_image(image, histeq_num, **kwargs)
+  elif histeq_num < 0:
+    logger.info(f"Applying global HE enhancement")
+    kwargs = {}
+    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
+    image = apply_global_histeq_image(image, **kwargs)
+  if args.art and args.gray != "none":
+    logger.info(f"Applying an artistic filter")
+    image = apply_artistic_filter_image(image, args.art)
+  if args.gamma != 1.0 and args.gamma > 0:
+    logger.info(f"Adjust brightness by a gamma")
+    image = apply_gamma_image(image, args.gamma)
+  if args.slog != 0:
+    logger.info(f"Adjust brightness by a scaled log")
+    image = apply_scaled_log_image(image, args.slog)
+  sigmoid_params = parse_num_opts_expression(args.sigmoid)
+  sigmoid_num = sigmoid_params["num"]
+  if sigmoid_num != 0:
+    logger.info(f"Adjust brightness by a sigmoid")
+    kwargs = {}
+    copy_param_to_kwargs(sigmoid_params, kwargs, "mid", float)
+    image = apply_sigmoid_image(image, sigmoid_num, **kwargs)
+  if args.saturate != 0:
+    logger.info(f"Saturating colors")
+    image = saturate_colors_image(image, args.saturate)
+  if args.gray and args.gray != "none":
+    logger.info(f"Converting to grayscale")
+    image = convert_grayscale_image(image, args.gray)
+  if args.denoise > 0:
+    logger.info(f"Applying birateral denoise")
+    image = bilateral_denoise_image(image, args.denoise)
+  blur_params = parse_num_opts_expression(args.blur)
+  blur_num = blur_params["num"]
+  if blur_num > 0:
+    logger.info(f"Applying Gaussian blur")
+    image = blur_image_gaussian(image, blur_num)
+  if blur_num < 0:
+    logger.info(f"Applying Pyramid blur")
+    kwargs = {}
+    copy_param_to_kwargs(blur_params, kwargs, "decay", float)
+    copy_param_to_kwargs(blur_params, kwargs, "contrast", float)
+    image = blur_image_pyramid(image, int(blur_num) * -1, **kwargs)
+  portrait_params = parse_name_opts_expression(args.portrait)
+  portrait_name = portrait_params["name"]
+  if portrait_name == "auto":
+    portrait_name = str(compute_levels_blur_image_portrait(image))
+  portrait_levels = int(portrait_name)
+  if portrait_levels != 0:
+    kwargs = {}
+    copy_param_to_kwargs(portrait_params, kwargs, "decay", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "contrast", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "edge_threshold", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "bokeh_balance", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "repeat", int)
+    copy_param_to_kwargs(portrait_params, kwargs, "grabcut", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "attractor", parse_coordinate)
+    copy_param_to_kwargs(portrait_params, kwargs, "attractor_weight", float)
+    copy_param_to_kwargs(portrait_params, kwargs, "finish_edge", float)
+    logger.info(f"Applying portrait blur by {portrait_levels} levels")
+    image = blur_image_portrait(image, portrait_levels, **kwargs)
+  if args.unsharp > 0:
+    logger.info(f"Applying Gaussian unsharp mask")
+    image = unsharp_image_gaussian(image, args.unsharp)
+  trim_params = parse_trim_expression(args.trim)
+  if trim_params:
+    logger.info(f"Trimming the image")
+    image = trim_image(image, *trim_params)
+  pers_params = parse_pers_expression(args.pers)
+  if pers_params:
+    logger.info(f"Doing perspective correction of the image")
+    image = perspective_correct_image(image, *pers_params)
+  scale_params = parse_scale_expression(args.scale)
+  if scale_params:
+    logger.info(f"Scaling the image")
+    if scale_params[1] is None:
+      scale_params = get_scaled_image_size(image, scale_params[0])
+    image = scale_image(image, *scale_params)
+  vignetting_params = parse_num_opts_expression(args.vignetting)
+  vignetting_num = vignetting_params["num"]
+  if vignetting_num != 0:
+    kwargs = {}
+    copy_param_to_kwargs(vignetting_params, kwargs, "cx", float)
+    copy_param_to_kwargs(vignetting_params, kwargs, "cy", float)
+    image = apply_vignetting_image(image, vignetting_num, **kwargs)
+  if len(args.caption) > 0:
+    logger.info(f"Writing the caption")
+    image = write_caption(image, args.caption)
+  return image
 
 
 if __name__ == "__main__":
