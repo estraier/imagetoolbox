@@ -169,7 +169,7 @@ def load_image(file_path):
     raise ValueError(f"Failed to load image: {file_path}")
   image, bits = normalize_input_image(image)
   h, w = image.shape[:2]
-  logger.debug(f"h={h}, w={w}, area={h*w}, bits={bits}")
+  logger.debug(f"input image: h={h}, w={w}, area={h*w}, bits={bits}")
   return image, bits
 
 
@@ -2270,7 +2270,7 @@ def optimize_exposure_image(image, strength, upper_pecentile=99, mask="face",
     raise ValueError(f"Unknown mask name: {mask}")
   slog = find_best_slog_factor(
     image, mask_image, gamma_scale=gamma_scale, log_scale=log_scale) * strength
-  logger.debug(f"optimize exposure slog: {slog:.2f}")
+  logger.debug(f"optimize exposure: upper={upper:.3f}, slog={slog:.2f}")
   image = apply_scaled_log_image(image, slog)
   return np.clip(image, 0, 1)
 
