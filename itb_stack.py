@@ -2252,6 +2252,7 @@ def optimize_exposure_image(image, strength, upper_pecentile=99, upper_target=0.
                             mask="face", mask_center=(0.5, 0.5), mask_reach=0.9, mask_decay=0.3,
                             gamma_scale=3.0, log_scale=None):
   """Optimizes exposure of the image automatically."""
+  strength = min(stength, 1.0)
   upper = np.percentile(image, upper_pecentile)
   if upper_target > upper:
     adjusted_target = upper + (upper_target - upper) * strength
