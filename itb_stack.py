@@ -2248,13 +2248,15 @@ def find_best_slog_factor(image, mask, bins=64, gamma_scale=None, log_scale=None
   return best_factor
 
 
-def optimize_exposure_image(image, strength, upper_pecentile=99, mask="face",
-                            mask_center=(0.5, 0.5), mask_reach=0.9, mask_decay=0.3,
+def optimize_exposure_image(image, strength, upper_pecentile=99, upper_target=0.9,
+                            mask="face", mask_center=(0.5, 0.5), mask_reach=0.9, mask_decay=0.3,
                             gamma_scale=3.0, log_scale=None):
   """Optimizes exposure of the image automatically."""
   upper = np.percentile(image, upper_pecentile)
-  upper = upper + (1.0 - upper) * (1.0 - strength)
-  image = np.clip(image / upper, 0, 1)
+  if upper_target > upper:
+    adjusted_target = upper + (upper_target - upper) * strength
+    gain = adjusted_target / max(upper, 0.1)
+    image = np.clip(image * gain, 0, 1)
   h, w = image.shape[:2]
   if mask == "oval":
     mask_image = generate_oval_mask(image, mask_center, mask_reach, mask_decay)
