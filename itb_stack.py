@@ -42,6 +42,7 @@ CMD_EXIFTOOL = "exiftool"
 CMD_HUGIN_ALIGN = "align_image_stack"
 EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"]
 EXTS_IMAGE_HEIF = [".heic", ".heif"]
+EXTS_IMAGE_RAW = [".cr2", ".cr3", ".nef", ".arw", ".dng", ".rw2", ".orf", ".raf", ".pef", ".sr2"]
 EXTS_IMAGE_EXIF = [".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".heic", ".heif"]
 EXTS_VIDEO = [".mp4", ".mov"]
 EXTS_NPZ = [".npz"]
@@ -212,6 +213,27 @@ def load_images_heif(file_path):
     image, bits = normalize_input_image(image)
     images.append((image, bits))
   return images
+
+
+def load_image_raw(file_path):
+  """Loads a raw image and returns its linear RGB data as a NumPy array."""
+  import rawpy
+  logger.debug(f"loading raw image: {file_path}")
+  with rawpy.imread(file_path) as raw:
+    rgb = raw.postprocess(
+      output_color=rawpy.ColorSpace.sRGB,
+      output_bps=16,
+      no_auto_bright=False,
+      use_camera_wb=True,
+      highlight_mode=rawpy.HighlightMode.Clip,
+      gamma=None,
+      user_flip=0,
+    )
+    image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    image = image.astype(np.float32) / 65535.0
+    image = np.clip(image, 0, 1)
+    image = srgb_to_linear(image)
+    return image, 16
 
 
 def load_video(file_path, mem_allowance, input_fps):
@@ -427,13 +449,22 @@ def compute_brightness(image):
   return np.mean(cv2.cvtColor(image.astype(np.float32), cv2.COLOR_BGR2GRAY))
 
 
+def apply_linear_image(image, factor):
+  """Adjusts image brightness by a linear multiplier."""
+  assert image.dtype == np.float32
+  if factor < 0:
+    return factor
+  image = image * factor
+  return np.clip(image, 0, 1).astype(np.float32)
+
+
 def apply_gamma_image(image, gamma):
   """Adjusts image brightness by a gamma transformation."""
   assert image.dtype == np.float32
   if gamma < 1e-6:
     return image
   image = np.power(image, 1 / gamma)
-  return image.astype(np.float32)
+  return np.clip(image, 0, 1).astype(np.float32)
 
 
 def apply_scaled_log_image(image, factor):
@@ -444,7 +475,7 @@ def apply_scaled_log_image(image, factor):
   elif factor < -1e-6:
     factor = -factor
     image = (np.expm1(image * np.log1p(factor))) / factor
-  return image.astype(np.float32)
+  return np.clip(image, 0, 1).astype(np.float32)
 
 
 def naive_sigmoid(x, gain, mid):
@@ -2252,7 +2283,7 @@ def optimize_exposure_image(image, strength, upper_pecentile=99, upper_target=0.
                             mask="face", mask_center=(0.5, 0.5), mask_reach=0.9, mask_decay=0.3,
                             gamma_scale=3.0, log_scale=None):
   """Optimizes exposure of the image automatically."""
-  strength = min(stength, 1.0)
+  strength = min(strength, 1.0)
   upper = np.percentile(image, upper_pecentile)
   if upper_target > upper:
     adjusted_target = upper + (upper_target - upper) * strength
@@ -2600,23 +2631,31 @@ def convert_image_lcs_tricolor(image):
   return np.clip(rgb_restored, 0, 1)
 
 
-def saturate_colors_image(image, factor):
+def saturate_image_linear(image, factor):
+  """Saturates colors of the image by linear multiplication."""
+  assert image.dtype == np.float32
+  hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+  h, s, v = cv2.split(hsv)
+  factor = min(max(0.01, factor), 100.0)
+  s = s * factor
+  hsv = cv2.merge((h, s, v))
+  mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+  return np.clip(mod_image, 0, 1).astype(np.float32)
+
+
+def saturate_image_scaled_log(image, factor):
   """Saturates colors of the image by applying a scaled log transformation."""
   assert image.dtype == np.float32
+  hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+  h, s, v = cv2.split(hsv)
   if factor > 1e-6:
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
     s = (np.log1p(s * factor) / np.log1p(factor)).astype(np.float32)
-    hsv = cv2.merge((h, s, v))
-    mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
   elif factor < -1e-6:
     factor = -factor
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
     s = ((np.expm1(s * np.log1p(factor))) / factor).astype(np.float32)
-    hsv = cv2.merge((h, s, v))
-    mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-  return mod_image.astype(np.float32)
+  hsv = cv2.merge((h, s, v))
+  mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+  return np.clip(mod_image, 0, 1).astype(np.float32)
 
 
 def center_rect(rect, center, area_ratio):
@@ -3295,7 +3334,10 @@ def make_ap_args():
                   help="apply an artistic filter: pencil, stylized, oil, cartoon")
   ap.add_argument("--optimize-exposure", "-ox", default="0", metavar="num",
                   help="optimize exposure automatically. 1 for perfect exposure")
-  ap.add_argument("--gamma", type=float, default=1.0, metavar="num",
+  ap.add_argument("--linear", type=float, default=1, metavar="num",
+                  help="linear brightness adjustment."
+                  " less than 1.0 to darken, less than 1.0 to lighten")
+  ap.add_argument("--gamma", type=float, default=1, metavar="num",
                   help="gamma brightness adjustment."
                   " less than 1.0 to darken, less than 1.0 to lighten")
   ap.add_argument("--slog", type=float, default=0, metavar="num",
@@ -3304,8 +3346,12 @@ def make_ap_args():
   ap.add_argument("--sigmoid", default="0", metavar="num",
                   help="sigmoidal contrast adjustment."
                   " positive to strengthen, negative to weaken")
-  ap.add_argument("--saturate", type=float, default=0, metavar="num",
-                  help="saturate colors. positive for vivid, negative for muted")
+  ap.add_argument("--saturation", type=float, default=1, metavar="num",
+                  help="saturate colors by linear mutiplication."
+                  " less than 1.0 to darken, less than 1.0 to lighten")
+  ap.add_argument("--vibrance", type=float, default=0, metavar="num",
+                  help="saturate colors by scaled log."
+                  " positive to lighten, negative to darken")
   ap.add_argument("--gray", default="", metavar="text",
                   help="convert to grayscale: bt601, bt709, bt2020,"
                   " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel,"
@@ -3472,6 +3518,12 @@ def load_input_images(args):
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
         images_data.append((image, bits))
+    elif ext in EXTS_IMAGE_RAW:
+      image, bits = load_image_raw(input_path)
+      total_mem_size += estimate_image_memory_size(image)
+      if total_mem_size > limit_mem_size:
+        raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
+      images_data.append((image, bits))
     elif ext in EXTS_IMAGE:
       image, bits = load_image(input_path)
       total_mem_size += estimate_image_memory_size(image)
@@ -3660,6 +3712,9 @@ def edit_image(image, args):
   if optex_num > 0:
     logger.info(f"Optimizing exposure automatically")
     image = optimize_exposure_image(image, optex_num)
+  if args.linear != 1.0 and args.linear > 0:
+    logger.info(f"Adjust brightness by a linear multiplier")
+    image = apply_linear_image(image, args.linear)
   if args.gamma != 1.0 and args.gamma > 0:
     logger.info(f"Adjust brightness by a gamma")
     image = apply_gamma_image(image, args.gamma)
@@ -3673,9 +3728,12 @@ def edit_image(image, args):
     kwargs = {}
     copy_param_to_kwargs(sigmoid_params, kwargs, "mid", float)
     image = apply_sigmoid_image(image, sigmoid_num, **kwargs)
-  if args.saturate != 0:
-    logger.info(f"Saturating colors")
-    image = saturate_colors_image(image, args.saturate)
+  if args.saturation != 1:
+    logger.info(f"Saturating colors by a linear multiplier")
+    image = saturate_image_linear(image, args.saturation)
+  if args.vibrance != 0:
+    logger.info(f"Saturating colors by a scaled log")
+    image = saturate_image_scaled_log(image, args.vibrance)
   if args.gray and args.gray != "none":
     logger.info(f"Converting to grayscale")
     image = convert_grayscale_image(image, args.gray)
