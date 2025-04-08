@@ -228,12 +228,71 @@ def load_image_raw(file_path):
       highlight_mode=rawpy.HighlightMode.Clip,
       gamma=None,
       user_flip=0,
+      fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full,
     )
     image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     image = image.astype(np.float32) / 65535.0
     image = np.clip(image, 0, 1)
     image = srgb_to_linear(image)
+    #image = denoise_chroma(image)
+    #image = geometric_mean_denoise_saturation(image)
+    image = harmonize_hue(image)
     return image, 16
+
+def harmonize_hue(image_bgr: np.ndarray, strength: float = 0.5) -> np.ndarray:
+    hls = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HLS)
+    h, l, s = cv2.split(hls)
+
+    angle = h * 2 * np.pi
+    sin_h = np.sin(angle) * s
+    cos_h = np.cos(angle) * s
+
+    sin_blur = cv2.GaussianBlur(sin_h, (5, 5), 0)
+    cos_blur = cv2.GaussianBlur(cos_h, (5, 5), 0)
+    magnitude = np.sqrt(sin_blur**2 + cos_blur**2)
+
+    angle_avg = np.arctan2(sin_blur, cos_blur)
+    angle_avg[angle_avg < 0] += 2 * np.pi
+    h_avg = angle_avg / (2 * np.pi)
+
+    h_harmonized = (1 - strength) * h + strength * h_avg
+    h_harmonized[magnitude < 1e-3] = h[magnitude < 1e-3]
+
+    hls_harmonized = cv2.merge([h_harmonized, l, s])
+    image_out = cv2.cvtColor(hls_harmonized, cv2.COLOR_HLS2BGR)
+    return np.clip(image_out, 0.0, 1.0).astype(np.float32)
+
+
+def denoise_chroma(image):
+  ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+  y, cr, cb = cv2.split(ycrcb)
+  cr_denoised = cv2.medianBlur(cr, 5)
+  cb_denoised = cv2.medianBlur(cb, 5)
+
+  cr_denoised = cv2.GaussianBlur(cr_denoised, (21, 21), 0)
+  cb_denoised = cv2.GaussianBlur(cb_denoised, (21, 21), 0)
+
+
+  merged = cv2.merge([y, cr_denoised, cb_denoised])
+  return cv2.cvtColor(merged, cv2.COLOR_YCrCb2BGR)
+
+
+def geometric_mean_denoise_saturation(image, strength=1.0):
+  hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
+  h, l, s = cv2.split(hls)
+
+  log_s = np.log(np.clip(s, 1e-4, 1.0))
+  blurred_log_s = cv2.GaussianBlur(log_s, (11, 11), 0)
+  geo_mean_s = np.exp(blurred_log_s)
+
+  weight = np.power(1 - l, 2.0)
+  s_denoised = s * (1 - weight * strength) + geo_mean_s * (weight * strength)
+
+  s_denoised = np.clip(s_denoised, 0, 1)
+  hls_denoised = cv2.merge([h, l, s_denoised])
+  return cv2.cvtColor(hls_denoised, cv2.COLOR_HLS2BGR)
+
+
 
 
 def load_video(file_path, mem_allowance, input_fps):

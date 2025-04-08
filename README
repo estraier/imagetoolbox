@@ -188,10 +188,12 @@ The workflow of this command is the following.
        use -nr or --no-restore to disable it.
   8: Optionally, various postprocessing methods are applied.
        --histeq to apply histgram equalization
+       --linear to modify brightness by a multiplicative function
        --gamma to modify brightness by a gamma function
        --slog to modify brightness by a scaled logarithmic function
        --sigmoid to adjust contrast by a scaled sigmoid function
-       --saturate to adjust saturation by a scaled logarithmic function
+       --saturation to adjust saturation by a multiplicative function
+       --vibrance to adjust saturation by a scaled logarithmic function
        --optimize-exposure to adjust exposure automatically
        --denoise, --blur, --unsharp, --portrait to adjust noise/bokeh/sharpness
        --trim, --pers, --scale to change geometry

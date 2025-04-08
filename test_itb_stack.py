@@ -18,7 +18,7 @@ import cv2
 from itb_stack import (
   main, set_logging_level,
   generate_colorbar, show_image, load_image, save_image, load_video, save_video,
-  compute_brightness, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
+  compute_brightness,
   adjust_white_balance_image, adjust_exposure_image,
   align_images_orb, align_images_sift, align_images_ecc,
   merge_images_average, merge_images_median, merge_images_geometric_mean,
@@ -29,7 +29,9 @@ from itb_stack import (
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
   fill_black_margin_image,
   apply_global_histeq_image, apply_clahe_image, apply_artistic_filter_image,
-  saturate_colors_image, optimize_exposure_image, convert_grayscale_image,
+  apply_linear_image, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
+  saturate_image_linear, saturate_image_scaled_log,
+  optimize_exposure_image, convert_grayscale_image,
   bilateral_denoise_image, blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
   blur_image_pyramid, unsharp_image_gaussian,
   perspective_correct_image, trim_image, scale_image, apply_vignetting_image, write_caption,
@@ -170,36 +172,6 @@ class TestItbStack(unittest.TestCase):
     image = generate_test_image()
     brightness = compute_brightness(image)
     self.assertTrue(0 <= brightness <= 1)
-
-  def test_apply_gamma_image_lighten(self):
-    image = generate_test_image()
-    processed = apply_gamma_image(image, 2.2)
-    self.assertEqual(processed.shape, image.shape)
-
-  def test_apply_gamma_image_lighten(self):
-    image = generate_test_image()
-    processed = apply_gamma_image(image, 1 / 2.2)
-    self.assertEqual(processed.shape, image.shape)
-
-  def test_apply_scaled_log_image_lighten(self):
-    image = generate_test_image()
-    processed = apply_scaled_log_image(image, 1)
-    self.assertEqual(processed.shape, image.shape)
-
-  def test_apply_scaled_log_image_darken(self):
-    image = generate_test_image()
-    processed = apply_scaled_log_image(image, -1)
-    self.assertEqual(processed.shape, image.shape)
-
-  def test_apply_sigmoidal_image_lighten(self):
-    image = generate_test_image()
-    processed = apply_sigmoid_image(image, 1, 0.5)
-    self.assertEqual(processed.shape, image.shape)
-
-  def test_apply_sigmoidal_image_darken(self):
-    image = generate_test_image()
-    processed = apply_sigmoid_image(image, -1, 0.5)
-    self.assertEqual(processed.shape, image.shape)
 
   def test_adjust_white_balance(self):
     image = generate_test_image()
@@ -364,14 +336,59 @@ class TestItbStack(unittest.TestCase):
       processed = apply_artistic_filter_image(image, name)
       self.assertEqual(processed.shape, image.shape)
 
-  def test_saturate_colors_image_thicker(self):
+  def test_apply_linear_image_lighten(self):
     image = generate_test_image()
-    processed = saturate_colors_image(image, 3)
+    processed = apply_linear_image(image, 2.2)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_saturate_colors_image_thinner(self):
+  def test_apply_linear_image_lighten(self):
     image = generate_test_image()
-    processed = saturate_colors_image(image, -3)
+    processed = apply_linear_image(image, 1 / 2.2)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_gamma_image_lighten(self):
+    image = generate_test_image()
+    processed = apply_gamma_image(image, 2.2)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_gamma_image_lighten(self):
+    image = generate_test_image()
+    processed = apply_gamma_image(image, 1 / 2.2)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_scaled_log_image_lighten(self):
+    image = generate_test_image()
+    processed = apply_scaled_log_image(image, 1)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_scaled_log_image_darken(self):
+    image = generate_test_image()
+    processed = apply_scaled_log_image(image, -1)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_sigmoidal_image_lighten(self):
+    image = generate_test_image()
+    processed = apply_sigmoid_image(image, 1, 0.5)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_sigmoidal_image_darken(self):
+    image = generate_test_image()
+    processed = apply_sigmoid_image(image, -1, 0.5)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_saturate_image_linear(self):
+    image = generate_test_image()
+    processed = saturate_image_linear(image, 2)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_saturate_image_scaled_log_thicker(self):
+    image = generate_test_image()
+    processed = saturate_image_scaled_log(image, 3)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_saturate_image_scaled_log_thinner(self):
+    image = generate_test_image()
+    processed = saturate_image_scaled_log(image, -3)
     self.assertEqual(processed.shape, image.shape)
 
   def test_optimize_exposure_face_gamma(self):
@@ -526,6 +543,23 @@ class TestItbStack(unittest.TestCase):
     output_path = os.path.join(self.temp_path, "output.tif")
     sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
                    "--merge", "grid:columns=2:margin=2:background=#282"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_edit_brightness(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--linear", "0.8", "--gamma", "1.1", "--slog", "0.5",
+                   "--sigmoid", "0.5:mid=0.3"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_edit_saturation(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--saturation", "0.5", "--vibrance", "1"]
     main()
     self.assertTrue(os.path.exists(output_path))
 
