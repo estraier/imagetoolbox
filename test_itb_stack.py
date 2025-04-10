@@ -27,12 +27,13 @@ from itb_stack import (
   merge_images_debevec, merge_images_robertson, merge_images_mertens,
   merge_images_focus_stacking, merge_images_grid, merge_images_stitch,
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
-  fill_black_margin_image,
+  fill_black_margin_image, apply_preset_image,
   apply_global_histeq_image, apply_clahe_image, apply_artistic_filter_image,
   apply_linear_image, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   saturate_image_linear, saturate_image_scaled_log,
   optimize_exposure_image, convert_grayscale_image,
-  bilateral_denoise_image, blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
+  color_denoise_image, bilateral_denoise_image,
+  blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
   blur_image_pyramid, unsharp_image_gaussian,
   perspective_correct_image, trim_image, scale_image, apply_vignetting_image, write_caption,
 )
@@ -315,6 +316,12 @@ class TestItbStack(unittest.TestCase):
     processed = tone_map_image_mantiuk(image)
     self.assertEqual(processed.shape, image.shape)
 
+  def test_apply_preset_image(self):
+    image = generate_test_image()
+    for name in ["raw-std", "light", "vivid"]:
+      processed = apply_preset_image(image, name)
+      self.assertEqual(processed.shape, image.shape)
+
   def test_fill_black_margin_image(self):
     image = generate_test_image()
     processed = fill_black_margin_image(image)
@@ -407,6 +414,11 @@ class TestItbStack(unittest.TestCase):
                  "stddev", "sharpness", "face", "focus", "lcs", "lcs:tricolor", "grabcut"]:
       processed = convert_grayscale_image(image, name)
       self.assertEqual(processed.shape, image.shape)
+
+  def test_color_denoise_image(self):
+    image = generate_test_image()
+    processed = color_denoise_image(image)
+    self.assertEqual(processed.shape, image.shape)
 
   def test_bilateral_denoise_image(self):
     image = generate_test_image()

@@ -2020,38 +2020,6 @@ def fill_black_margin_image(image):
   return restored[padding:-padding, padding:-padding]
 
 
-def apply_global_histeq_image(image, gamma=2.2, white_level=255, restore_color=True):
-  """Applies global histogram equalization contrast enhancement."""
-  assert image.dtype == np.float32
-  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-  l, a, b = cv2.split(lab)
-  l = np.clip(l, 0, 100)
-  a = np.clip(a, -128, 127)
-  b = np.clip(b, -128, 127)
-  l = np.power(l / 100, 1 / gamma) * white_level
-  byte_l = (l).astype(np.uint8)
-  undo_bytes = byte_l.astype(np.float32)
-  float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
-  new_l = cv2.equalizeHist(byte_l).astype(np.float32)
-  new_l = np.power(new_l / white_level, gamma) * 100
-  corrected = new_l / np.maximum(float_ratio, 1e-6)
-  corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
-  new_l = np.clip(corrected, 0, 100)
-  lab = cv2.merge((new_l, a, b))
-  enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-  if restore_color:
-    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    _, old_s, old_v = cv2.split(old_hsv)
-    new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
-    new_h, _, new_v = cv2.split(new_hsv)
-    s_estimate_ratio = (1 - new_v) / (1 - old_v + 1e-10)
-    s_estimate_ratio = np.clip(s_estimate_ratio, 1 / 8, 8)
-    merged_s = np.clip(old_s * (s_estimate_ratio ** 0.5), 0, 1)
-    final_hsv = cv2.merge((new_h, merged_s, new_v))
-    enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
-  return np.clip(enhanced_image, 0, 1)
-
-
 PRESETS = {
   "raw-min": {
     "color-denoise": True,
@@ -2116,6 +2084,38 @@ def apply_preset_image(image, name):
   if vibrance:
     image = saturate_image_scaled_log(image, vibrance)
   return np.clip(image, 0, 1)
+
+
+def apply_global_histeq_image(image, gamma=2.2, white_level=255, restore_color=True):
+  """Applies global histogram equalization contrast enhancement."""
+  assert image.dtype == np.float32
+  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+  l, a, b = cv2.split(lab)
+  l = np.clip(l, 0, 100)
+  a = np.clip(a, -128, 127)
+  b = np.clip(b, -128, 127)
+  l = np.power(l / 100, 1 / gamma) * white_level
+  byte_l = (l).astype(np.uint8)
+  undo_bytes = byte_l.astype(np.float32)
+  float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
+  new_l = cv2.equalizeHist(byte_l).astype(np.float32)
+  new_l = np.power(new_l / white_level, gamma) * 100
+  corrected = new_l / np.maximum(float_ratio, 1e-6)
+  corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
+  new_l = np.clip(corrected, 0, 100)
+  lab = cv2.merge((new_l, a, b))
+  enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+  if restore_color:
+    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    _, old_s, old_v = cv2.split(old_hsv)
+    new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
+    new_h, _, new_v = cv2.split(new_hsv)
+    s_estimate_ratio = (1 - new_v) / (1 - old_v + 1e-10)
+    s_estimate_ratio = np.clip(s_estimate_ratio, 1 / 8, 8)
+    merged_s = np.clip(old_s * (s_estimate_ratio ** 0.5), 0, 1)
+    final_hsv = cv2.merge((new_h, merged_s, new_v))
+    enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+  return np.clip(enhanced_image, 0, 1)
 
 
 def apply_clahe_image(image, clip_limit, gamma=2.2, white_level=245, restore_color=True):
