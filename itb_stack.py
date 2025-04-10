@@ -2021,7 +2021,7 @@ def fill_black_margin_image(image):
 
 
 PRESETS = {
-  "raw-min": {
+  "raw-muted": {
     "color-denoise": True,
     "sigmoid": (0.5, 0.4),
     "saturation": 1.1,
@@ -2032,6 +2032,12 @@ PRESETS = {
     "sigmoid": (1.0, 0.4),
     "saturation": 1.2,
     "vibrance": 0.8,
+  },
+  "raw-vivid": {
+    "color-denoise": True,
+    "sigmoid": (1.1, 0.4),
+    "saturation": 1.3,
+    "vibrance": 1.0,
   },
   "light": {
     "linear": 1.1,
@@ -2045,15 +2051,15 @@ PRESETS = {
     "slog": -0.8,
     "sigmoid": (1.0, 0.6),
   },
-  "vivid": {
-    "sigmoid": (1.0, 0.4),
-    "saturation": 1.2,
-    "vibrance": 0.8,
-  },
   "muted": {
     "sigmoid": (-1.0, 0.4),
-    "saturation": 0.9,
-    "vibrance": -0.5,
+    "saturation": 0.8,
+    "vibrance": -1.0,
+  },
+  "vivid": {
+    "sigmoid": (1.0, 0.4),
+    "saturation": 1.3,
+    "vibrance": 1.0,
   },
 }
 
@@ -3433,6 +3439,8 @@ def make_ap_args():
   ap.add_argument("inputs", nargs='+', help="input image paths")
   ap.add_argument("--output", "-o", default="output.jpg", metavar="path",
                   help="output image path (dafault=output.jpg)")
+  ap.add_argument("--raw-preset", default="raw-std", metavar="name",
+                  help="preset for raw development: raw-muted, raw-std, raw-vivid")
   ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
                   help="choose a white balance:"
                   " none (default), auto, auto-scene, daylight, cloudy, shade, tungsten,"
@@ -3456,7 +3464,7 @@ def make_ap_args():
   ap.add_argument("--fill-margin", "-fm", action='store_true',
                   help="fill black marin with the color of nearest pixels")
   ap.add_argument("--preset", default="", metavar="name",
-                  help="apply a preset: raw-min, raw-std, light, dark, vivid, muted")
+                  help="apply a preset: light, dark, muted, vivid")
   ap.add_argument("--histeq", default="0", metavar="num",
                   help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--art", default="", metavar="name",
@@ -3652,6 +3660,8 @@ def load_input_images(args):
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
+      if args.raw_preset and args.raw_preset != "none":
+        image = apply_preset_image(image, args.raw_preset)
       images_data.append((image, bits))
     elif ext in EXTS_IMAGE:
       image, bits = load_image(input_path)
