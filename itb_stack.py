@@ -234,65 +234,7 @@ def load_image_raw(file_path):
     image = image.astype(np.float32) / 65535.0
     image = np.clip(image, 0, 1)
     image = srgb_to_linear(image)
-    #image = denoise_chroma(image)
-    #image = geometric_mean_denoise_saturation(image)
-    image = harmonize_hue(image)
     return image, 16
-
-def harmonize_hue(image_bgr: np.ndarray, strength: float = 0.5) -> np.ndarray:
-    hls = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HLS)
-    h, l, s = cv2.split(hls)
-
-    angle = h * 2 * np.pi
-    sin_h = np.sin(angle) * s
-    cos_h = np.cos(angle) * s
-
-    sin_blur = cv2.GaussianBlur(sin_h, (5, 5), 0)
-    cos_blur = cv2.GaussianBlur(cos_h, (5, 5), 0)
-    magnitude = np.sqrt(sin_blur**2 + cos_blur**2)
-
-    angle_avg = np.arctan2(sin_blur, cos_blur)
-    angle_avg[angle_avg < 0] += 2 * np.pi
-    h_avg = angle_avg / (2 * np.pi)
-
-    h_harmonized = (1 - strength) * h + strength * h_avg
-    h_harmonized[magnitude < 1e-3] = h[magnitude < 1e-3]
-
-    hls_harmonized = cv2.merge([h_harmonized, l, s])
-    image_out = cv2.cvtColor(hls_harmonized, cv2.COLOR_HLS2BGR)
-    return np.clip(image_out, 0.0, 1.0).astype(np.float32)
-
-
-def denoise_chroma(image):
-  ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
-  y, cr, cb = cv2.split(ycrcb)
-  cr_denoised = cv2.medianBlur(cr, 5)
-  cb_denoised = cv2.medianBlur(cb, 5)
-
-  cr_denoised = cv2.GaussianBlur(cr_denoised, (21, 21), 0)
-  cb_denoised = cv2.GaussianBlur(cb_denoised, (21, 21), 0)
-
-
-  merged = cv2.merge([y, cr_denoised, cb_denoised])
-  return cv2.cvtColor(merged, cv2.COLOR_YCrCb2BGR)
-
-
-def geometric_mean_denoise_saturation(image, strength=1.0):
-  hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
-  h, l, s = cv2.split(hls)
-
-  log_s = np.log(np.clip(s, 1e-4, 1.0))
-  blurred_log_s = cv2.GaussianBlur(log_s, (11, 11), 0)
-  geo_mean_s = np.exp(blurred_log_s)
-
-  weight = np.power(1 - l, 2.0)
-  s_denoised = s * (1 - weight * strength) + geo_mean_s * (weight * strength)
-
-  s_denoised = np.clip(s_denoised, 0, 1)
-  hls_denoised = cv2.merge([h, l, s_denoised])
-  return cv2.cvtColor(hls_denoised, cv2.COLOR_HLS2BGR)
-
-
 
 
 def load_video(file_path, mem_allowance, input_fps):
@@ -2110,6 +2052,72 @@ def apply_global_histeq_image(image, gamma=2.2, white_level=255, restore_color=T
   return np.clip(enhanced_image, 0, 1)
 
 
+PRESETS = {
+  "raw-min": {
+    "color-denoise": True,
+    "sigmoid": (0.5, 0.4),
+    "saturation": 1.1,
+    "vibrance": 0.5,
+  },
+  "raw-std": {
+    "color-denoise": True,
+    "sigmoid": (1.0, 0.4),
+    "saturation": 1.2,
+    "vibrance": 0.8,
+  },
+  "light": {
+    "linear": 1.1,
+    "gamma": 1.1,
+    "slog": 0.8,
+    "sigmoid": (1.0, 0.4),
+  },
+  "dark": {
+    "linear": 0.9,
+    "gamma": 0.9,
+    "slog": -0.8,
+    "sigmoid": (1.0, 0.6),
+  },
+  "vivid": {
+    "sigmoid": (1.0, 0.4),
+    "saturation": 1.2,
+    "vibrance": 0.8,
+  },
+  "muted": {
+    "sigmoid": (-1.0, 0.4),
+    "saturation": 0.9,
+    "vibrance": -0.5,
+  },
+}
+
+
+def apply_preset_image(image, name):
+  """Applies a preset on the image."""
+  preset = PRESETS.get(name)
+  if not preset:
+    raise ValueError(f"Unknown preset: {name}")
+  if "color-denoise" in preset:
+    image = color_denoise_image(image)
+  linear = preset.get("linear")
+  if linear:
+    image = apply_linear_image(image, linear)
+  gamma = preset.get("gamma")
+  if gamma:
+    image = apply_gamma_image(image, gamma)
+  slog = preset.get("slog")
+  if gamma:
+    image = apply_scaled_log_image(image, slog)
+  sigmoid = preset.get("sigmoid")
+  if sigmoid:
+    image = sigmoidal_contrast_image(image, gain=sigmoid[0], mid=sigmoid[1])
+  saturation = preset.get("saturation")
+  if saturation:
+    image = saturate_image_linear(image, saturation)
+  vibrance = preset.get("vibrance")
+  if vibrance:
+    image = saturate_image_scaled_log(image, vibrance)
+  return np.clip(image, 0, 1)
+
+
 def apply_clahe_image(image, clip_limit, gamma=2.2, white_level=245, restore_color=True):
   """Applies CLAHE contrast enhancement."""
   assert image.dtype == np.float32
@@ -2398,6 +2406,12 @@ def convert_grayscale_image(image, expr):
     l, _, _ = cv2.split(lab)
     l = np.clip(l, 0, 100)
     gray_image = l / 100
+    color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
+    return np.clip(color_image, 0, 1)
+  elif name in ["ycbcr", "ycrcb"]:
+    ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+    y, _, _ = cv2.split(ycrcb)
+    gray_image = y
     color_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     return np.clip(color_image, 0, 1)
   elif name in ["hsv", "value"]:
@@ -2740,6 +2754,60 @@ def normalize_edge_image(image):
   image = z_score_normalization(image)
   image = percentile_normalization(image, 2, 98)
   return np.clip(image, 0, 1)
+
+
+def compute_color_noises(image, ksize=5, percentile=70, gamma=2.0):
+  """Computes color noseses."""
+  assert image.dtype == np.float32
+  upper = np.percentile(image, 98)
+  image = image / (upper + 1e-6)
+  ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+  _, cr, cb = cv2.split(ycrcb)
+  cr_med = cv2.medianBlur(cr, ksize)
+  cb_med = cv2.medianBlur(cb, ksize)
+  diff_cr = np.abs(cr - cr_med)
+  diff_cb = np.abs(cb - cb_med)
+  chroma_diff = np.sqrt(diff_cr**2 + diff_cb**2)
+  chroma_strength = np.sqrt(cr_med**2 + cb_med**2) + 1e-6
+  relative_chroma_noise = chroma_diff / chroma_strength
+  threshold = np.percentile(relative_chroma_noise, percentile)
+  max_val = np.percentile(relative_chroma_noise, 99.5)
+  soft_mask = np.clip((relative_chroma_noise - threshold) /
+                      (max_val - threshold + 1e-6), 0.0, 1.0)
+  noise_map = soft_mask ** (1 / gamma)
+  return noise_map.astype(np.float32)
+
+
+def blur_chroma_image(image, kernel_sizes=[3, 5, 7]):
+  """Blurs chroma of the image."""
+  assert image.dtype == np.float32
+  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+  l, a, b = cv2.split(lab)
+  for k in kernel_sizes:
+    a = cv2.GaussianBlur(a, (k, k), 0)
+    b = cv2.GaussianBlur(b, (k, k), 0)
+  merged = cv2.merge([l, a, b])
+  merged = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+  return np.clip(merged, 0, 1)
+
+
+def color_denoise_image(image, blur_level=3):
+  """Applies color denoise."""
+  assert image.dtype == np.float32
+  hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
+  h, l, s = cv2.split(hls)
+  color_noises = compute_color_noises(image)
+  blurred = blur_image_pyramid(image, blur_level)
+  blurred_hls = cv2.cvtColor(blurred, cv2.COLOR_BGR2HLS)
+  blurred_h, blurred_l, blurred_s = cv2.split(blurred_hls)
+  suppressed_s = blurred_s * (1.0 - color_noises * 0.5)
+  restored_s = suppressed_s * (np.mean(blurred_s) / max(np.mean(suppressed_s), 0.01))
+  merged_hls = cv2.merge((blurred_h, l, restored_s))
+  merged_image = cv2.cvtColor(merged_hls, cv2.COLOR_HLS2BGR)
+  color_noises_3c = color_noises[:, :, None]
+  result = color_noises_3c * image + (1.0 - color_noises_3c) * merged_image
+  result = blur_chroma_image(result)
+  return np.clip(result, 0, 1)
 
 
 def bilateral_denoise_image(image, radius):
@@ -3387,9 +3455,11 @@ def make_ap_args():
                   help="do not apply auto restoration of brightness")
   ap.add_argument("--fill-margin", "-fm", action='store_true',
                   help="fill black marin with the color of nearest pixels")
+  ap.add_argument("--preset", default="", metavar="name",
+                  help="apply a preset: raw-min, raw-std, light, dark, vivid, muted")
   ap.add_argument("--histeq", default="0", metavar="num",
                   help="apply histogram equalization by the clip limit. negative means global")
-  ap.add_argument("--art", default="", metavar="text",
+  ap.add_argument("--art", default="", metavar="name",
                   help="apply an artistic filter: pencil, stylized, oil, cartoon")
   ap.add_argument("--optimize-exposure", "-ox", default="0", metavar="num",
                   help="optimize exposure automatically. 1 for perfect exposure")
@@ -3411,9 +3481,9 @@ def make_ap_args():
   ap.add_argument("--vibrance", type=float, default=0, metavar="num",
                   help="saturate colors by scaled log."
                   " positive to lighten, negative to darken")
-  ap.add_argument("--gray", default="", metavar="text",
+  ap.add_argument("--gray", default="", metavar="name",
                   help="convert to grayscale: bt601, bt709, bt2020,"
-                  " red, orange, yellow, green, blue, mean, lab, hsv, laplacian, sobel,"
+                  " red, orange, yellow, green, blue, mean, lab, ycbcr, hsv, laplacian, sobel,"
                   " stddev, sharpness, face, focus, lcs, grabcut")
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
                   help="apply bilateral denoise by the pixel radius.")
@@ -3432,7 +3502,7 @@ def make_ap_args():
                   help="scale change: WIDTH,HEIGHT in pixels eg. 1920,1080")
   ap.add_argument("--vignetting", default="0", metavar="num",
                   help="apply vignetting by the light reduction ratio at the corners")
-  ap.add_argument("--caption", default="", metavar="text",
+  ap.add_argument("--caption", default="", metavar="expr",
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--input-video-fps", type=float, default=1, metavar="num",
                   help="input video files with the FPS")
@@ -3746,6 +3816,9 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
 def edit_image(image, args):
   """Edits an image."""
   assert image.dtype == np.float32
+  if args.preset and args.preset != "none":
+    logger.info(f"Applying preset: {args.preset}")
+    image = apply_preset_image(image, args.preset)
   if args.fill_margin:
     logger.info(f"Filling the margin")
     image = fill_black_margin_image(image)
