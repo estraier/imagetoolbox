@@ -22,6 +22,7 @@
 
 import argparse
 import logging
+import io
 import math
 import os
 import re
@@ -34,6 +35,7 @@ import time
 import cv2
 import exifread
 import numpy as np
+from PIL import Image, ImageCms
 
 
 PROG_NAME = "itb_stack.py"
@@ -128,7 +130,7 @@ def generate_colorbar(width=640, height=480):
   return img.astype(np.float32) / 255
 
 
-def show_image(image, title="show_image"):
+def show_image(image, title="show_image", icc_name="srgb"):
   """Shows an image in the window."""
   image = image.astype(np.float32)
   if image.dtype == np.uint8:
@@ -136,13 +138,14 @@ def show_image(image, title="show_image"):
   if len(image.shape) == 2:
     image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     image = np.clip(image, 0, 1)
-  image = linear_to_srgb(image)
+  profile = ICC_PROFILES[icc_name]
+  image = profile["from_linear"](image)
   cv2.imshow(title, image)
   cv2.waitKey(0)
   cv2.destroyAllWindows()
 
 
-def normalize_input_image(image):
+def normalize_input_image(image, icc_name):
   """Normalizes the input image as linear RGB data in BGR space."""
   if image.dtype == np.uint32:
     image = image.astype(np.float32) / float((1<<32) - 1)
@@ -158,8 +161,32 @@ def normalize_input_image(image):
   elif image.shape[2] == 4:
     image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
   image = np.clip(image, 0, 1)
-  image = srgb_to_linear(image)
+  profile = ICC_PROFILES[icc_name]
+  image = profile["to_linear"](image)
   return image, bits
+
+
+def check_icc_profile_name(file_path):
+  """Checks the name of the ICC profile of the image."""
+  try:
+    with Image.open(file_path) as img:
+      icc_bytes = img.info.get("icc_profile", None)
+      if not icc_bytes:
+        return "srgb"
+      profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
+      desc = ImageCms.getProfileDescription(profile).lower()
+      if "prophoto" in desc:
+        return "prophoto_rgb"
+      elif "adobe" in desc:
+        return "adobe_rgb"
+      elif "display p3" in desc or "displayp3" in desc:
+        return "display_p3"
+      elif "srgb" in desc:
+        return "srgb"
+      else:
+        return "srgb"
+  except Exception as e:
+    return "srgb"
 
 
 def load_image(file_path):
@@ -168,17 +195,19 @@ def load_image(file_path):
   image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
   if image is None:
     raise ValueError(f"Failed to load image: {file_path}")
-  image, bits = normalize_input_image(image)
+  icc_name = check_icc_profile_name(file_path)
+  image, bits = normalize_input_image(image, icc_name)
   h, w = image.shape[:2]
-  logger.debug(f"input image: h={h}, w={w}, area={h*w}, bits={bits}")
-  return image, bits
+  logger.debug(f"input image: h={h}, w={w}, area={h*w}, bits={bits}, icc={icc_name}")
+  return image, bits, icc_name
 
 
-def save_image(file_path, image, bits):
+def save_image(file_path, image, bits, icc_name):
   """Saves an image after converting it from linear RGB to sRGB."""
   assert image.dtype == np.float32
   logger.debug(f"saving image: {file_path}")
-  image = linear_to_srgb(image)
+  profile = ICC_PROFILES[icc_name]
+  image = profile["from_linear"](image)
   ext = os.path.splitext(file_path)[1].lower()
   if ext in [".jpg", ".jpeg", ".webp"]:
     image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
@@ -201,6 +230,7 @@ def load_images_heif(file_path):
   from pillow_heif import open_heif
   logger.debug(f"loading HEIF/HIEC image: {file_path}")
   heif_file = open_heif(file_path)
+  icc_name = check_icc_profile_name(file_path)
   images = []
   for heif_image in heif_file:
     if heif_image.mode in ["RGB", "RGBA", "L", "LA"]:
@@ -210,8 +240,10 @@ def load_images_heif(file_path):
     else:
       raise ValueError(f"Unknown image mode: {heif_image.mode}")
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    image, bits = normalize_input_image(image)
-    images.append((image, bits))
+    image, bits = normalize_input_image(image, icc_name)
+    h, w = image.shape[:2]
+    logger.debug(f"input image: h={h}, w={w}, area={h*w}, bits={bits}, icc={icc_name}")
+    images.append((image, bits, icc_name))
   return images
 
 
@@ -220,8 +252,9 @@ def load_image_raw(file_path):
   import rawpy
   logger.debug(f"loading raw image: {file_path}")
   with rawpy.imread(file_path) as raw:
+    icc_name = "prophoto_rgb"
     rgb = raw.postprocess(
-      output_color=rawpy.ColorSpace.sRGB,
+      output_color=rawpy.ColorSpace.ProPhoto,
       output_bps=16,
       no_auto_bright=False,
       use_camera_wb=True,
@@ -233,8 +266,9 @@ def load_image_raw(file_path):
     image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     image = image.astype(np.float32) / 65535.0
     image = np.clip(image, 0, 1)
-    image = srgb_to_linear(image)
-    return image, 16
+    profile = ICC_PROFILES[icc_name]
+    image = profile["to_linear"](image)
+    return image, 16, icc_name
 
 
 def load_video(file_path, mem_allowance, input_fps):
@@ -257,7 +291,7 @@ def load_video(file_path, mem_allowance, input_fps):
       ret, frame = cap.read()
       if not ret:
         break
-      frame, bits = normalize_input_image(frame)
+      frame, bits = normalize_input_image(frame, "srgb")
       frame_mem_size = estimate_image_memory_size(frame)
       if total_mem_usage + frame_mem_size > mem_allowance:
         logger.warning(f"Memory limit reached while processing")
@@ -270,7 +304,7 @@ def load_video(file_path, mem_allowance, input_fps):
       ret, frame = cap.read()
       if not ret:
         break
-      frame, bits = normalize_input_image(frame)
+      frame, bits = normalize_input_image(frame, "srgb")
       frame_mem_size = estimate_image_memory_size(frame)
       if total_mem_usage + frame_mem_size > mem_allowance:
         logger.warning(f"Memory limit reached while processing")
@@ -429,7 +463,7 @@ def copy_metadata(source_path, target_path):
 
 
 def srgb_to_linear(image):
-  """Converts sRGB to linear RGB using OpenCV."""
+  """Converts sRGB gamma into linear RGB."""
   assert image.dtype == np.float32
   image = np.where(image <= 0.04045,
                    image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
@@ -437,11 +471,61 @@ def srgb_to_linear(image):
 
 
 def linear_to_srgb(image):
-  """Converts linear RGB to sRGB using OpenCV."""
+  """Converts linear RGB into sRGB gamma."""
   assert image.dtype == np.float32
   image = np.where(image <= 0.0031308,
                    image * 12.92, 1.055 * cv2.pow(image, 1/2.4) - 0.055)
   return image.astype(np.float32)
+
+
+def prophoto_rgb_to_linear(image):
+  """Converts linear RGB into ProPhoto RGB gamma."""
+  assert image.dtype == np.float32
+  image = np.where(image < 0.03125, image / 16.0, np.power(image, 1.8))
+  return image.astype(np.float32)
+
+
+def linear_to_prophoto_rgb(image):
+  """Converts ProPhoto RGB gamma into linear RGB."""
+  assert image.dtype == np.float32
+  image = np.where(image < 0.001953, image * 16.0, np.power(image, 1 / 1.8))
+  return image.astype(np.float32)
+
+
+def adobe_rgb_to_linear(image):
+  """Converts Adobe RGB gamma into linear RGB."""
+  assert image.dtype == np.float32
+  return np.power(np.clip(image, 0.0, 1.0), 2.2).astype(np.float32)
+
+
+def linear_to_adobe_rgb(image):
+  """Converts linear RGB into Adobe RGB gamma."""
+  assert image.dtype == np.float32
+  return np.power(np.clip(image, 0.0, 1.0), 1 / 2.2).astype(np.float32)
+
+
+ICC_PROFILES = {
+  "srgb": {
+    "to_linear": srgb_to_linear,
+    "from_linear": linear_to_srgb,
+    "icc_path": "sRGB_IEC61966-2-1_no_black_scaled.icc",
+  },
+  "prophoto_rgb": {
+    "to_linear": prophoto_rgb_to_linear,
+    "from_linear": linear_to_prophoto_rgb,
+    "icc_path": "ProPhotoRGB.icc",
+  },
+  "adobe_rgb": {
+    "to_linear": adobe_rgb_to_linear,
+    "from_linear": linear_to_adobe_rgb,
+    "icc_path": "AdobeRGB1998.icc",
+  },
+  "display_p3": {
+    "to_linear": srgb_to_linear,
+    "from_linear": linear_to_srgb,
+    "icc_path": "DisplayP3.icc",
+  },
+}
 
 
 def compute_brightness(image):
@@ -1189,7 +1273,7 @@ def align_images_ecc(images, aligned_indices, use_affine=True, denoise=3):
   return cropped_images
 
 
-def align_images_hugin(images, input_paths, bits_list):
+def align_images_hugin(images, input_paths, bits_list, icc_names):
   """Aligns images using Hugin."""
   assert all(image.dtype == np.float32 for image in images)
   if len(images) < 2:
@@ -1201,13 +1285,13 @@ def align_images_hugin(images, input_paths, bits_list):
   full_prefix = os.path.join(temp_dir, prefix)
   cmd = [CMD_HUGIN_ALIGN, "-C", "-c", "64", "-a", f"{full_prefix}-output-"]
   align_input_paths = []
-  for image, input_path, bits in zip(images, input_paths, bits_list):
+  for image, input_path, bits, icc_name in zip(images, input_paths, bits_list, icc_names):
     ext = os.path.splitext(input_path)[1].lower()
     if ext not in EXTS_IMAGE:
       raise ValueError(f"Unsupported file format: {ext}")
     align_input_path = f"{full_prefix}-input-{len(align_input_paths)+1:04d}{ext}"
     align_input_paths.append(align_input_path)
-    save_image(align_input_path, image, bits)
+    save_image(align_input_path, image, bits, icc_name)
     cmd.append(align_input_path)
   logger.debug(f"running: {' '.join(cmd)}")
   subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
@@ -1218,7 +1302,7 @@ def align_images_hugin(images, input_paths, bits_list):
   for name in os.listdir(temp_dir):
     if not name.startswith(prefix): continue
     align_output_path = os.path.join(temp_dir, name)
-    image, bits = load_image(align_output_path)
+    image, bits, icc_name = load_image(align_output_path)
     aligned_images.append(image)
     os.remove(align_output_path)
   return aligned_images
@@ -3537,7 +3621,7 @@ def main():
       raise ValueError(f"{path} doesn't exist")
   logger.info(f"Loading the input files")
   images_data = load_input_images(args)
-  images, bits_list = zip(*images_data)
+  images, bits_list, icc_names = zip(*images_data)
   meta_list = [get_metadata(input_path) for input_path in args.inputs]
   if logger.isEnabledFor(logging.DEBUG):
     log_image_stats(images[0][0], "first")
@@ -3577,7 +3661,7 @@ def main():
     images = align_images_ecc(images, aligned_indices, **kwargs)
   elif align_name in ["hugin", "h"]:
     logger.info(f"Aligning images by Hugin")
-    images = align_images_hugin(images, args.inputs, bits_list)
+    images = align_images_hugin(images, args.inputs, bits_list, icc_names)
   else:
     raise ValueError(f"Unknown align method: f{align_name}")
   images = adjust_size_images(images)
@@ -3585,9 +3669,10 @@ def main():
     logger.debug(f"aligned indices: {sorted(list(aligned_indices))}")
     if args.ignore_unaligned:
       old_num = len(images)
-      images, bits_list, meta_list = zip(
-        *[(image, bits, meta)
-          for i, (image, bits, meta) in enumerate(zip(images, bits_list, meta_list))
+      images, bits_list, icc_names, meta_list = zip(
+        *[(image, bits, icc_name, meta)
+          for i, (image, bits, icc_name, meta)
+          in enumerate(zip(images, bits_list, icc_names, meta_list))
           if i in aligned_indices])
       if len(images) != old_num:
         logger.debug(f"{old_num - len(images)} of {old_num} images are removed")
@@ -3597,7 +3682,7 @@ def main():
   elif ext in EXTS_VIDEO:
     postprocess_video(args, images)
   elif ext in EXTS_IMAGE:
-    postprocess_images(args, images, bits_list, meta_list, mean_brightness)
+    postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brightness)
   else:
     raise ValueError(f"Unsupported file format: {ext}")
   elapsed_time = time.time() - start_time
@@ -3623,52 +3708,54 @@ def load_input_images(args):
         copy_param_to_kwargs(ctl_params, kwargs, "color", parse_color_expr)
         image = generate_blank(**kwargs)
         bits = 8
+        icc_name = 'srgb'
       elif name == "colorbar":
         kwargs = {}
         copy_param_to_kwargs(ctl_params, kwargs, "width", int)
         copy_param_to_kwargs(ctl_params, kwargs, "height", int)
         image = generate_colorbar(**kwargs)
         bits = 8
+        icc_name = 'srgb'
       else:
         raise ValueError(f"Unsupported image generation: {name}")
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-      images_data.append((image, bits))
+      images_data.append((image, bits, icc_name))
     elif ext in EXTS_NPZ:
       npz_image_data = load_npz(input_path, mem_allowance)
       for image, bits in npz_image_data:
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-        images_data.append((image, bits))
+        images_data.append((image, bits, "srgb"))
     elif ext in EXTS_VIDEO:
       video_image_data = load_video(input_path, mem_allowance, args.input_video_fps)
       for image, bits in video_image_data:
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-        images_data.append((image, bits))
+        images_data.append((image, bits, "srgb"))
     elif ext in EXTS_IMAGE_HEIF:
-      for image, bits in load_images_heif(input_path):
+      for image, bits, icc_name in load_images_heif(input_path):
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-        images_data.append((image, bits))
+        images_data.append((image, bits, icc_name))
     elif ext in EXTS_IMAGE_RAW:
-      image, bits = load_image_raw(input_path)
+      image, bits, icc_name = load_image_raw(input_path)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
       if args.raw_preset and args.raw_preset != "none":
         image = apply_preset_image(image, args.raw_preset)
-      images_data.append((image, bits))
+      images_data.append((image, bits, icc_name))
     elif ext in EXTS_IMAGE:
-      image, bits = load_image(input_path)
+      image, bits, icc_name = load_image(input_path)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-      images_data.append((image, bits))
+      images_data.append((image, bits, icc_name))
     else:
       raise ValueError(f"Unsupported file format: {ext}")
   return images_data
@@ -3719,7 +3806,7 @@ def log_image_stats(image, prefix):
                f" stddev={stddev:.3f}, skew={skew:.3f}, kurt={kurt:.3f}, nan={has_nan}")
 
 
-def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
+def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brightness):
   """Postprocesses images as a merged image."""
   assert all(image.dtype == np.float32 for image in images)
   merge_params = parse_name_opts_expression(args.merge)
@@ -3817,7 +3904,7 @@ def postprocess_images(args, images, bits_list, meta_list, mean_brightness):
   merged_image = edit_image(merged_image, args)
   logger.info(f"Saving the output file as an image")
   ext = os.path.splitext(args.output)[1].lower()
-  save_image(args.output, merged_image, bits_list[0])
+  save_image(args.output, merged_image, bits_list[0], icc_names[0])
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
     copy_metadata(args.inputs[0], args.output)

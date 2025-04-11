@@ -18,7 +18,8 @@ import cv2
 from itb_stack import (
   main, set_logging_level,
   generate_colorbar, show_image, load_image, save_image, load_video, save_video,
-  compute_brightness,
+  srgb_to_linear, linear_to_srgb, prophoto_rgb_to_linear, linear_to_prophoto_rgb,
+  adobe_rgb_to_linear, linear_to_adobe_rgb, compute_brightness,
   adjust_white_balance_image, adjust_exposure_image,
   align_images_orb, align_images_sift, align_images_ecc,
   merge_images_average, merge_images_median, merge_images_geometric_mean,
@@ -90,44 +91,51 @@ class TestItbStack(unittest.TestCase):
 
   @patch("cv2.imread", return_value=generate_test_image())
   def test_load_image_mock(self, mock_imread):
-    image, bits = load_image("test_image.jpg")
+    image, bits, icc_name = load_image("test_image.jpg")
     self.assertEqual(image.shape, (1000, 1000, 3))
     self.assertIn(bits, [8, 16, 32])
 
   @patch("cv2.imwrite", return_value=True)
   def test_save_image_mock(self, mock_imwrite):
     image = generate_test_image()
-    save_image("test_image.jpg", image, 8)
+    save_image("test_image.jpg", image, 8, "srgb")
     mock_imwrite.assert_called_once()
 
   def test_save_and_load_image_jpeg(self):
     image = generate_test_image()
     path = os.path.join(self.temp_path, "test_image.jpg")
-    save_image(path, image, 8)
-    loaded_image, bits = load_image(path)
+    save_image(path, image, 8, "srgb")
+    loaded_image, bits, icc_name = load_image(path)
     self.assertEqual(image.shape, loaded_image.shape)
     self.assertEqual(bits, 8)
+    self.assertEqual(icc_name, "srgb")
 
   def test_save_and_load_image_tiff(self):
     image = generate_test_image()
     path = os.path.join(self.temp_path, "test_image.tif")
-    save_image(path, image, 16)
-    loaded_image, bits = load_image(path)
+    save_image(path, image, 16, "srgb")
+    loaded_image, bits, icc_name = load_image(path)
     self.assertEqual(image.shape, loaded_image.shape)
+    self.assertEqual(bits, 16)
+    self.assertEqual(icc_name, "srgb")
 
   def test_save_and_load_image_png(self):
     image = generate_test_image()
     path = os.path.join(self.temp_path, "test_image.png")
-    save_image(path, image, 16)
-    loaded_image, bits = load_image(path)
+    save_image(path, image, 16, "srgb")
+    loaded_image, bits, icc_name = load_image(path)
     self.assertEqual(image.shape, loaded_image.shape)
+    self.assertEqual(bits, 16)
+    self.assertEqual(icc_name, "srgb")
 
   def test_save_and_load_image_webp(self):
     image = generate_test_image()
     path = os.path.join(self.temp_path, "test_image.webp")
-    save_image(path, image, 8)
-    loaded_image, bits = load_image(path)
+    save_image(path, image, 8, "srgb")
+    loaded_image, bits, icc_name = load_image(path)
     self.assertEqual(image.shape, loaded_image.shape)
+    self.assertEqual(bits, 8)
+    self.assertEqual(icc_name, "srgb")
 
   @patch("cv2.VideoCapture")
   def test_load_video_mock(self, mock_video_capture):
@@ -168,6 +176,36 @@ class TestItbStack(unittest.TestCase):
     for image, bits in image_data:
       self.assertEqual(bits, 8)
       self.assertEqual(image.shape, images[0].shape)
+
+  def test_srgb_to_linear(self):
+    image = generate_test_image()
+    adjusted_image = srgb_to_linear(image)
+    self.assertEqual(adjusted_image.shape, image.shape)
+
+  def test_linear_to_srgb(self):
+    image = generate_test_image()
+    adjusted_image = linear_to_srgb(image)
+    self.assertEqual(adjusted_image.shape, image.shape)
+
+  def test_prophoto_rgb_to_linear(self):
+    image = generate_test_image()
+    adjusted_image = prophoto_rgb_to_linear(image)
+    self.assertEqual(adjusted_image.shape, image.shape)
+
+  def test_linear_to_prophoto_rgb(self):
+    image = generate_test_image()
+    adjusted_image = linear_to_prophoto_rgb(image)
+    self.assertEqual(adjusted_image.shape, image.shape)
+
+  def test_adobe_rgb_to_linear(self):
+    image = generate_test_image()
+    adjusted_image = adobe_rgb_to_linear(image)
+    self.assertEqual(adjusted_image.shape, image.shape)
+
+  def test_linear_to_adobe_rgb(self):
+    image = generate_test_image()
+    adjusted_image = linear_to_adobe_rgb(image)
+    self.assertEqual(adjusted_image.shape, image.shape)
 
   def test_compute_brightness(self):
     image = generate_test_image()
