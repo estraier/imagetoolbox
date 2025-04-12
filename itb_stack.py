@@ -405,7 +405,7 @@ def get_metadata(path):
   meta = {}
   if has_command(CMD_EXIFTOOL):
     ext = os.path.splitext(path)[1].lower()
-    if ext in EXTS_IMAGE_EXIF:
+    if ext in EXTS_IMAGE_EXIF or ext in EXTS_IMAGE_RAW:
       cmd = ["exiftool", "-s", "-t", "-n", path]
       logger.debug(f"running: {' '.join(cmd)}")
       content = subprocess.check_output(
@@ -451,9 +451,21 @@ def get_light_value(meta):
 
 
 def copy_metadata(source_path, target_path):
-  """Copies EXIF data and ICC profile from source image to target image."""
-  cmd = ["exiftool", "-TagsFromFile", source_path, "-icc_profile",
+  """Copies EXIF data from source image to target image."""
+  cmd = ["exiftool", "-TagsFromFile", source_path,
          "-thumbnailimage=", "-f", "-m", "-overwrite_original", target_path]
+  logger.debug(f"running: {' '.join(cmd)}")
+  try:
+    subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+  except:
+    pass
+
+
+def copy_icc_profile(source_path, target_path):
+  """Copies ICC profile from source image to target image."""
+  cmd = ["exiftool", "-TagsFromFile", source_path,
+         "-icc_profile", "-f", "-m", "-overwrite_original", target_path]
   logger.debug(f"running: {' '.join(cmd)}")
   try:
     subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
@@ -3927,6 +3939,8 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
     copy_metadata(args.inputs[0], args.output)
+    if ext in EXTS_IMAGE and icc_names[0] != 'srgb':
+      copy_icc_profile(args.inputs[0], args.output)
 
 
 def edit_image(image, args):
