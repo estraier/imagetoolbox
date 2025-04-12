@@ -2134,6 +2134,7 @@ PRESETS = {
     "color-denoise": True,
     "stretch": (0.85, 99.9),
     "sigmoid": (0.6, 0.35),
+    "slog": 1.5,
     "saturation": 1.1,
     "vibrance": 0.5,
   },
@@ -2141,6 +2142,7 @@ PRESETS = {
     "color-denoise": True,
     "stretch": (0.90, 99.7),
     "sigmoid": (1.0, 0.35),
+    "slog": 2.2,
     "saturation": 1.2,
     "vibrance": 0.8,
   },
@@ -2148,6 +2150,7 @@ PRESETS = {
     "color-denoise": True,
     "stretch": (0.92, 99.5),
     "sigmoid": (1.2, 0.35),
+    "slog": 2.4,
     "saturation": 1.3,
     "vibrance": 1.0,
   },
@@ -2193,7 +2196,7 @@ def apply_preset_image(image, name):
   if gamma:
     image = apply_gamma_image(image, gamma)
   slog = preset.get("slog")
-  if gamma:
+  if slog:
     image = apply_scaled_log_image(image, slog)
   sigmoid = preset.get("sigmoid")
   if sigmoid:
