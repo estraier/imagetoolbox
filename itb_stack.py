@@ -256,9 +256,9 @@ def load_image_raw(file_path):
     rgb = raw.postprocess(
       output_color=rawpy.ColorSpace.ProPhoto,
       output_bps=16,
-      no_auto_bright=False,
+      no_auto_bright=True,
       use_camera_wb=True,
-      highlight_mode=rawpy.HighlightMode.Clip,
+      highlight_mode=rawpy.HighlightMode.Blend,
       gamma=None,
       user_flip=0,
       fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full,
@@ -532,6 +532,19 @@ def compute_brightness(image):
   """Computes the average brightness of an image in grayscale."""
   assert image.dtype == np.float32
   return np.mean(cv2.cvtColor(image.astype(np.float32), cv2.COLOR_BGR2GRAY))
+
+
+def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
+                           lower_target=0.0, lower_percentile=-1):
+  """Stretches contrast of the image."""
+  assert image.dtype == np.float32
+  gray = np.sqrt(np.mean(image ** 2, axis=2))
+  upper = np.percentile(gray, upper_percentile) if upper_percentile >= 0 else 1.0
+  lower = np.percentile(gray, lower_percentile) if lower_percentile >= 0 else 0.0
+  scale = (upper_target - lower_target) / max(upper - lower, 1e-6)
+  bias = lower_target - lower * scale
+  stretched = image * scale + bias
+  return np.clip(stretched, 0.0, 1.0)
 
 
 def apply_linear_image(image, factor):
@@ -2107,19 +2120,22 @@ def fill_black_margin_image(image):
 PRESETS = {
   "raw-muted": {
     "color-denoise": True,
-    "sigmoid": (0.5, 0.4),
+    "stretch": (0.85, 99.9),
+    "sigmoid": (0.5, 0.35),
     "saturation": 1.1,
     "vibrance": 0.5,
   },
   "raw-std": {
     "color-denoise": True,
-    "sigmoid": (1.0, 0.4),
+    "stretch": (0.90, 99.5),
+    "sigmoid": (1.0, 0.35),
     "saturation": 1.2,
     "vibrance": 0.8,
   },
   "raw-vivid": {
     "color-denoise": True,
-    "sigmoid": (1.1, 0.4),
+    "stretch": (0.92, 99),
+    "sigmoid": (1.1, 0.35),
     "saturation": 1.3,
     "vibrance": 1.0,
   },
@@ -2151,10 +2167,13 @@ PRESETS = {
 def apply_preset_image(image, name):
   """Applies a preset on the image."""
   preset = PRESETS.get(name)
-  if not preset:
+  if preset is None:
     raise ValueError(f"Unknown preset: {name}")
   if "color-denoise" in preset:
     image = color_denoise_image(image)
+  stretch = preset.get("stretch")
+  if stretch:
+    image = stretch_contrast_image(image, stretch[0], stretch[1])
   linear = preset.get("linear")
   if linear:
     image = apply_linear_image(image, linear)

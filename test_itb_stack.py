@@ -30,6 +30,7 @@ from itb_stack import (
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
   fill_black_margin_image, apply_preset_image,
   apply_global_histeq_image, apply_clahe_image, apply_artistic_filter_image,
+  stretch_contrast_image,
   apply_linear_image, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   saturate_image_linear, saturate_image_scaled_log,
   optimize_exposure_image, convert_grayscale_image,
@@ -380,6 +381,16 @@ class TestItbStack(unittest.TestCase):
     for name in ["pencil", "stylized", "oil", "cartoon"]:
       processed = apply_artistic_filter_image(image, name)
       self.assertEqual(processed.shape, image.shape)
+
+  def test_stretch_contrast_image_upper(self):
+    image = generate_test_image()
+    processed = stretch_contrast_image(image, 0.9, 99, 0, -1)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_stretch_contrast_image_lower(self):
+    image = generate_test_image()
+    processed = stretch_contrast_image(image, 1.0, -1, 0, 1)
+    self.assertEqual(processed.shape, image.shape)
 
   def test_apply_linear_image_lighten(self):
     image = generate_test_image()
