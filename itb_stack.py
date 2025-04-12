@@ -3938,8 +3938,9 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
   save_image(args.output, merged_image, bits_list[0], icc_names[0])
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
-    copy_metadata(args.inputs[0], args.output)
-    if ext in EXTS_IMAGE and icc_names[0] != 'srgb':
+    if ext in EXTS_IMAGE_EXIF:
+      copy_metadata(args.inputs[0], args.output)
+    if ext in EXTS_IMAGE_EXIF and icc_names[0] != 'srgb':
       copy_icc_profile(args.inputs[0], args.output)
 
 
