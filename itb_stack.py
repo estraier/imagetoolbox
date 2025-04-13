@@ -619,6 +619,12 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
                            lower_target=0.0, lower_percentile=-1):
   """Stretches contrast of the image."""
   assert image.dtype == np.float32
+
+
+  # hoge
+  # do trimming 4%*4%
+
+
   gray = np.sqrt(np.mean(image ** 2, axis=2))
   upper = np.percentile(gray, upper_percentile) if upper_percentile >= 0 else 1.0
   lower = np.percentile(gray, lower_percentile) if lower_percentile >= 0 else 0.0
@@ -2263,7 +2269,7 @@ def apply_preset_image(image, name, meta):
     else:
       blur_level = 2
     if blur_level > 0:
-      image = color_denoise_image(image, blur_level)
+      image = masked_denoise_image(image, blur_level, blur_level)
   stretch = preset.get("stretch")
   if stretch:
     image = stretch_contrast_image(image, stretch[0], stretch[1])
@@ -2980,24 +2986,6 @@ def compute_color_noises(image, ksize=5, percentile=70, gamma=2.0):
   return noise_map.astype(np.float32)
 
 
-def color_denoise_image(image, blur_level=3):
-  """Applies color denoise."""
-  assert image.dtype == np.float32
-  hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
-  h, l, s = cv2.split(hls)
-  color_noises = compute_color_noises(image)
-  blurred = blur_image_pyramid(image, blur_level)
-  blurred_hls = cv2.cvtColor(blurred, cv2.COLOR_BGR2HLS)
-  blurred_h, blurred_l, blurred_s = cv2.split(blurred_hls)
-  suppressed_s = blurred_s * (1.0 - color_noises * 0.5)
-  restored_s = suppressed_s * (np.mean(blurred_s) / max(np.mean(suppressed_s), 0.01))
-  merged_hls = cv2.merge((blurred_h, l, restored_s))
-  merged_image = cv2.cvtColor(merged_hls, cv2.COLOR_HLS2BGR)
-  color_noises_3c = color_noises[:, :, None]
-  result = color_noises_3c * image + (1.0 - color_noises_3c) * merged_image
-  return np.clip(result, 0, 1)
-
-
 def bilateral_denoise_image(image, radius):
   """Applies bilateral denoise."""
   assert image.dtype == np.float32
@@ -3005,6 +2993,34 @@ def bilateral_denoise_image(image, radius):
   sigma_color = min(0.05 * math.sqrt(ksize), 0.35)
   sigma_space = 10 * math.sqrt(ksize)
   return cv2.bilateralFilter(image, ksize, sigma_color, sigma_space)
+
+
+def masked_denoise_image(image, color_blur_level=3, luminance_blur_radius=3):
+  """Applies masked denoise."""
+  assert image.dtype == np.float32
+  if color_blur_level > 0:
+    hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
+    h, l, s = cv2.split(hls)
+    color_noises = compute_color_noises(image)
+    blurred = blur_image_pyramid(image, color_blur_level)
+    blurred_hls = cv2.cvtColor(blurred, cv2.COLOR_BGR2HLS)
+    blurred_h, blurred_l, blurred_s = cv2.split(blurred_hls)
+    suppressed_s = blurred_s * (1.0 - color_noises * 0.5)
+    restored_s = suppressed_s * (np.mean(blurred_s) / max(np.mean(suppressed_s), 0.01))
+    merged_hls = cv2.merge((blurred_h, l, restored_s))
+    merged_image = cv2.cvtColor(merged_hls, cv2.COLOR_HLS2BGR)
+    color_noises_3c = color_noises[:, :, None]
+    result = color_noises_3c * image + (1.0 - color_noises_3c) * merged_image
+  else:
+    result = image
+  if luminance_blur_radius > 0:
+    sharpness = compute_sharpness_naive(image, base_area=sys.maxsize)
+    smoothness = 1 - percentile_normalization(sharpness, 50, 98)
+    blur_mask = np.sqrt(color_noises * smoothness)
+    blur_mask_3c = blur_mask[:, :, None]
+    blurred = bilateral_denoise_image(result, luminance_blur_radius)
+    result = blur_mask_3c * blurred + (1.0 - blur_mask_3c) * result
+  return np.clip(result, 0, 1)
 
 
 def blur_image_gaussian(image, radius):
@@ -3715,7 +3731,7 @@ def make_ap_args():
                   " red, orange, yellow, green, blue, mean, lab, ycbcr, hsv, laplacian, sobel,"
                   " stddev, sharpness, face, focus, lcs, grabcut")
   ap.add_argument("--denoise", type=int, default=0, metavar="num",
-                  help="apply bilateral denoise by the pixel radius.")
+                  help="apply bilateral denoise by the pixel radius. negative for masked denoise")
   ap.add_argument("--blur", default="0", metavar="num",
                   help="apply Gaussian blur by the pixel radius. negative uses pyramid blur")
   ap.add_argument("--portrait", default="0", metavar="num",
@@ -4144,8 +4160,11 @@ def edit_image(image, meta, args):
     logger.info(f"Converting to grayscale")
     image = convert_grayscale_image(image, args.gray)
   if args.denoise > 0:
-    logger.info(f"Applying birateral denoise")
+    logger.info(f"Applying bilateral denoise")
     image = bilateral_denoise_image(image, args.denoise)
+  if args.denoise < 0:
+    logger.info(f"Applying masked denoise")
+    image = masked_denoise_image(image, -args.denoise, -args.denoise)
   blur_params = parse_num_opts_expression(args.blur)
   blur_num = blur_params["num"]
   if blur_num > 0:

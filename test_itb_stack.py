@@ -35,7 +35,7 @@ from itb_stack import (
   apply_linear_image, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   saturate_image_linear, saturate_image_scaled_log,
   optimize_exposure_image, convert_grayscale_image,
-  color_denoise_image, bilateral_denoise_image,
+  bilateral_denoise_image, masked_denoise_image,
   blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
   blur_image_pyramid, unsharp_image_gaussian,
   perspective_correct_image, trim_image, scale_image, apply_vignetting_image, write_caption,
@@ -476,14 +476,14 @@ class TestItbStack(unittest.TestCase):
       processed = convert_grayscale_image(image, name)
       self.assertEqual(processed.shape, image.shape)
 
-  def test_color_denoise_image(self):
-    image = generate_test_image()
-    processed = color_denoise_image(image)
-    self.assertEqual(processed.shape, image.shape)
-
   def test_bilateral_denoise_image(self):
     image = generate_test_image()
     processed = bilateral_denoise_image(image, 3)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_masked_denoise_image(self):
+    image = generate_test_image()
+    processed = masked_denoise_image(image, 2, 2)
     self.assertEqual(processed.shape, image.shape)
 
   def test_blur_image_gaussian(self):
