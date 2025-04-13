@@ -2996,10 +2996,10 @@ def bilateral_denoise_image(image, radius):
 def masked_denoise_image(image, color_blur_level=3, luminance_blur_radius=3):
   """Applies masked denoise."""
   assert image.dtype == np.float32
+  color_noises = compute_color_noises(image)
   if color_blur_level > 0:
     hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
     h, l, s = cv2.split(hls)
-    color_noises = compute_color_noises(image)
     blurred = blur_image_pyramid(image, color_blur_level)
     blurred_hls = cv2.cvtColor(blurred, cv2.COLOR_BGR2HLS)
     blurred_h, blurred_l, blurred_s = cv2.split(blurred_hls)
