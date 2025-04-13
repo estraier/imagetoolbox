@@ -2200,49 +2200,49 @@ def fill_black_margin_image(image):
 PRESETS = {
   "raw-muted": {
     "color-denoise": True,
-    "stretch": (0.90, 99.9),
-    "sigmoid": (0.6, 0.35),
-    "slog": 2.2,
+    "stretch": (0.90, 99.7),
+    "sigmoid": (2.8, 0.45),
+    "slog": 0.3,
     "saturation": 1.1,
-    "vibrance": 0.5,
+    "vibrance": 0.1,
   },
   "raw-std": {
     "color-denoise": True,
     "stretch": (0.92, 99.5),
-    "sigmoid": (1.0, 0.35),
-    "slog": 2.4,
+    "sigmoid": (3.0, 0.45),
+    "slog": 0.4,
     "saturation": 1.2,
-    "vibrance": 1.0,
+    "vibrance": 0.2,
   },
   "raw-vivid": {
     "color-denoise": True,
-    "stretch": (0.94, 99.1),
-    "sigmoid": (1.2, 0.35),
-    "slog": 2.6,
+    "stretch": (0.95, 99.3),
+    "sigmoid": (3.3, 0.45),
+    "slog": 0.6,
     "saturation": 1.3,
-    "vibrance": 1.5,
+    "vibrance": 0.3,
   },
   "light": {
     "linear": 1.1,
     "gamma": 1.1,
-    "slog": 0.8,
-    "sigmoid": (1.0, 0.4),
+    "slog": 0.5,
+    "sigmoid": (1.0, 0.45),
   },
   "dark": {
     "linear": 0.9,
     "gamma": 0.9,
-    "slog": -0.8,
-    "sigmoid": (1.0, 0.6),
+    "slog": -0.5,
+    "sigmoid": (1.0, 0.55),
   },
   "muted": {
-    "sigmoid": (-1.0, 0.4),
-    "saturation": 0.8,
-    "vibrance": -1.0,
+    "sigmoid": (-1.0, 0.45),
+    "saturation": 0.9,
+    "vibrance": -0.5,
   },
   "vivid": {
-    "sigmoid": (1.0, 0.4),
-    "saturation": 1.3,
-    "vibrance": 1.0,
+    "sigmoid": (1.0, 0.45),
+    "saturation": 1.2,
+    "vibrance": 0.2,
   },
 }
 
@@ -2970,19 +2970,6 @@ def compute_color_noises(image, ksize=5, percentile=70, gamma=2.0):
   return noise_map.astype(np.float32)
 
 
-def blur_chroma_image(image, kernel_sizes=[3, 5, 7]):
-  """Blurs chroma of the image."""
-  assert image.dtype == np.float32
-  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-  l, a, b = cv2.split(lab)
-  for k in kernel_sizes:
-    a = cv2.GaussianBlur(a, (k, k), 0)
-    b = cv2.GaussianBlur(b, (k, k), 0)
-  merged = cv2.merge([l, a, b])
-  merged = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
-  return np.clip(merged, 0, 1)
-
-
 def color_denoise_image(image, blur_level=3):
   """Applies color denoise."""
   assert image.dtype == np.float32
@@ -2998,7 +2985,6 @@ def color_denoise_image(image, blur_level=3):
   merged_image = cv2.cvtColor(merged_hls, cv2.COLOR_HLS2BGR)
   color_noises_3c = color_noises[:, :, None]
   result = color_noises_3c * image + (1.0 - color_noises_3c) * merged_image
-  result = blur_chroma_image(result)
   return np.clip(result, 0, 1)
 
 
