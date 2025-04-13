@@ -166,18 +166,18 @@ def normalize_input_image(image, icc_name):
   return image, bits
 
 
-def check_icc_profile_name(file_path):
+def check_icc_profile_name(file_path, default="srgb"):
   """Checks the name of the ICC profile of the image."""
   try:
     with Image.open(file_path) as img:
       icc_bytes = img.info.get("icc_profile", None)
       if not icc_bytes:
-        return "srgb"
+        return default
       profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
       desc = ImageCms.getProfileDescription(profile).strip().lower()
   except Exception:
-    return "srgb"
-  name = "srgb"
+    return default
+  name = default
   if "prophoto" in desc:
     name = "prophoto_rgb"
     ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
@@ -251,7 +251,7 @@ def load_images_heif(file_path):
   from pillow_heif import open_heif
   logger.debug(f"loading HEIF/HIEC image: {file_path}")
   heif_file = open_heif(file_path)
-  icc_name = check_icc_profile_name(file_path)
+  icc_name = check_icc_profile_name(file_path, "display_p3")
   images = []
   for heif_image in heif_file:
     if heif_image.mode in ["RGB", "RGBA", "L", "LA"]:

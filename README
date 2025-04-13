@@ -10,11 +10,11 @@ by the file extension (.jpg, .tif, .tiff, .png, .webp).
 
 Python3 is required to run scripts.  Required libraries are the following.
 
-  OpenCV2, NumPy, ExifRead
+  OpenCV2, NumPy, Pillow, ExifRead
 
 To install them, run the following command.
 
-  $ pip3 install opencv-python-headless numpy exifread
+  $ pip3 install opencv-python-headless numpy pillow exifread
 
 Optionally, those tools can be executed implicitly.
 
@@ -23,6 +23,10 @@ Optionally, those tools can be executed implicitly.
 Optionally, HEIC/HEIF input is supported if you install this library.
 
   $ pip3 install pillow_heif
+
+Optionally, raw image input is supported if you install this library.
+
+  $ pip3 install rawpy
 
 Optionally, face detection is enhanced if you install DNN model files.
 
