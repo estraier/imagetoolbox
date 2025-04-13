@@ -19,7 +19,8 @@ from itb_stack import (
   main, set_logging_level,
   generate_colorbar, show_image, load_image, save_image, load_video, save_video,
   srgb_to_linear, linear_to_srgb, prophoto_rgb_to_linear, linear_to_prophoto_rgb,
-  adobe_rgb_to_linear, linear_to_adobe_rgb, compute_brightness,
+  adobe_rgb_to_linear, linear_to_adobe_rgb, bt2020_to_linear, linear_to_bt2020,
+  compute_brightness,
   adjust_white_balance_image, adjust_exposure_image,
   align_images_orb, align_images_sift, align_images_ecc,
   merge_images_average, merge_images_median, merge_images_geometric_mean,
@@ -206,6 +207,16 @@ class TestItbStack(unittest.TestCase):
   def test_linear_to_adobe_rgb(self):
     image = generate_test_image()
     adjusted_image = linear_to_adobe_rgb(image)
+    self.assertEqual(adjusted_image.shape, image.shape)
+
+  def test_bt2020_to_linear(self):
+    image = generate_test_image()
+    adjusted_image = bt2020_to_linear(image)
+    self.assertEqual(adjusted_image.shape, image.shape)
+
+  def test_linear_to_bt2020(self):
+    image = generate_test_image()
+    adjusted_image = linear_to_bt2020(image)
     self.assertEqual(adjusted_image.shape, image.shape)
 
   def test_compute_brightness(self):

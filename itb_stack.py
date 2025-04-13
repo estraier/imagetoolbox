@@ -537,6 +537,18 @@ def linear_to_adobe_rgb(image):
   return np.power(np.clip(image, 0.0, 1.0), 1 / 2.2).astype(np.float32)
 
 
+def bt2020_to_linear(image):
+  """Converts Rec BT2020 gamma into linear RGB."""
+  assert image.dtype == np.float32
+  return np.power(np.clip(image, 0.0, 1.0), 2.4).astype(np.float32)
+
+
+def linear_to_bt2020(image):
+  """Converts linear RGB into Rec BT2020 gamma."""
+  assert image.dtype == np.float32
+  return np.power(np.clip(image, 0.0, 1.0), 1 / 2.4).astype(np.float32)
+
+
 ICC_PROFILES = {
   "srgb": {
     "to_linear": srgb_to_linear,
