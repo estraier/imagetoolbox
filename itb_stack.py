@@ -619,13 +619,11 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
                            lower_target=0.0, lower_percentile=-1):
   """Stretches contrast of the image."""
   assert image.dtype == np.float32
-
-
-  # hoge
-  # do trimming 4%*4%
-
-
-  gray = np.sqrt(np.mean(image ** 2, axis=2))
+  h, w = image.shape[:2]
+  margin_h = int(h * 0.02)
+  margin_w = int(w * 0.02)
+  trimmed = image[margin_h:h - margin_h, margin_w:w - margin_w]
+  gray = np.sqrt(np.mean(trimmed ** 2, axis=2))
   upper = np.percentile(gray, upper_percentile) if upper_percentile >= 0 else 1.0
   lower = np.percentile(gray, lower_percentile) if lower_percentile >= 0 else 0.0
   scale = (upper_target - lower_target) / max(upper - lower, 1e-6)
