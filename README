@@ -28,6 +28,11 @@ Optionally, raw image input is supported if you install this library.
 
   $ pip3 install rawpy
 
+Optionally, color management with ICC profiles are supported if you install ICC files.
+
+  $ sudo mkdir -p /usr/local/share/color/icc
+  $ sudo cp icc/* /usr/local/share/color/icc
+
 Optionally, face detection is enhanced if you install DNN model files.
 
   $ sudo mkdir -p /usr/local/share/opencv2
@@ -158,6 +163,11 @@ especially useful for portraiture.
 If "exiftool" command is available on your system, EXIF metadata and ICC profile of the first
 input image are preserved in the merged image.
 
+By default, color profiles are copied from the input file to the output file.  If ICC profiles
+are installed on your system, you can convert the color gamut into the one of another profile.
+
+  $ itb_stack.py input*.jpg -o output.jpg --gamut bt2020
+
 If the output file name has an extension of videos (.mp4 and .mov), a video whose frames are
 the input images is created.  You can specify the FPS (frames per second).
 
@@ -174,6 +184,13 @@ images are saved in the file so it is useful as a cache to omit costly image ali
 
   $ itb_stack.py input*.jpg -o cache.npz -a s
   $ itb_stack.py cache.npz -o output.jpg -m d -t r
+
+Development of raw image files are also supported.  Available xtensions are ".cr2", ".cr3",
+".nef", ".arw", ".dng", ".rw2", ".orf", ".raf", ".pef", and ".sr2".  Exposure and color are
+adjusted by applying presets.
+
+  $ itb_stack.py input.dng -o output.jpg
+  $ itb_stack.py input.dng -o output.jpg --raw-preset raw-vivid
 
 The workflow of this command is the following.
 

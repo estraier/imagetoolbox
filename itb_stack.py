@@ -74,6 +74,12 @@ def find_file(dir_list, name):
   return None
 
 
+def read_file(path):
+  """Reads a file and returns a byte array of the content."""
+  with open(path, "rb") as input_file:
+    return input_file.read()
+
+
 def generate_blank(width=640, height=480, color=(0.5, 0.5, 0.5)):
   """Generates a blank image."""
   color = color[2], color[1], color[0]
@@ -197,12 +203,18 @@ def attach_icc_profile(file_path, icc_name):
   """Attaches the ICC profile to the image file."""
   item = ICC_PROFILES.get(icc_name)
   if not item:
+    logger.warning(f"no such ICC profile: {icc_name}")
     return False
   profile = item.get("icc_data")
   if not profile:
-    return False
+    icc_path = find_icc_file(icc_name)
+    if not icc_path:
+      logger.warning(f"missing ICC profile: {icc_name}")
+      return False
+    profile = read_file(icc_path)
+    item["icc_data"] = profile
   try:
-    logger.debug(f"saving ICC {icc_name}")
+    logger.debug(f"saving ICC profile: {icc_name}")
     with Image.open(file_path) as img:
       img.save(file_path, icc_profile=profile)
   except Exception:
@@ -273,9 +285,9 @@ def load_image_raw(file_path):
   import rawpy
   logger.debug(f"loading raw image: {file_path}")
   with rawpy.imread(file_path) as raw:
-    icc_name = "prophoto_rgb"
+    icc_name = "srgb"
     rgb = raw.postprocess(
-      output_color=rawpy.ColorSpace.ProPhoto,
+      output_color=rawpy.ColorSpace.sRGB,
       output_bps=16,
       no_auto_bright=True,
       use_camera_wb=True,
@@ -553,24 +565,48 @@ ICC_PROFILES = {
   "srgb": {
     "to_linear": srgb_to_linear,
     "from_linear": linear_to_srgb,
-    "icc_path": "sRGB_IEC61966-2-1_no_black_scaled.icc",
+    "file_names": ["sRGB.icc", "sRGB_IEC61966-2-1_no_black_scaled.icc"],
   },
   "prophoto_rgb": {
     "to_linear": prophoto_rgb_to_linear,
     "from_linear": linear_to_prophoto_rgb,
-    "icc_path": "ProPhotoRGB.icc",
+    "file_names": ["ProPhoto-RGB.icc", "ProPhotoRGB.icc"],
   },
   "adobe_rgb": {
     "to_linear": adobe_rgb_to_linear,
     "from_linear": linear_to_adobe_rgb,
-    "icc_path": "AdobeRGB1998.icc",
+    "file_names": ["Adobe-RGB.icc", "AdobeRGB1998.icc"],
   },
   "display_p3": {
     "to_linear": srgb_to_linear,
     "from_linear": linear_to_srgb,
-    "icc_path": "DisplayP3.icc",
+    "file_names": ["Display-P3.icc", "DisplayP3.icc"],
+  },
+  "bt2020": {
+    "to_linear": bt2020_to_linear,
+    "from_linear": linear_to_bt2020,
+    "file_names": ["BT2020.icc", "Rec-2020.icc", "Rec2020-Rec1886.icc"],
   },
 }
+
+
+def find_icc_file(name):
+  """Finds the path of the ICC profile name."""
+  ICC_DIRS = [
+    "/usr/share/color/icc",
+    "/usr/local/share/color/icc",
+    "./icc", ".",
+  ]
+  profile = ICC_PROFILES.get(name)
+  if not profile:
+    return None
+  file_names = profile["file_names"]
+  for directory in ICC_DIRS:
+    for file_name in file_names:
+      full_path = os.path.join(directory, file_name)
+      if os.path.isfile(full_path):
+        return full_path
+  return None
 
 
 def compute_brightness(image):
@@ -3574,6 +3610,45 @@ def parse_scale_expression(expr):
   return w, h
 
 
+def convert_gamut_image(image, src_name, dst_name):
+  """Converts color gamut of the image with ICC profiles."""
+  assert image.dtype == np.float32
+  src_profile = ICC_PROFILES[src_name]
+  dst_profile = ICC_PROFILES[dst_name]
+  src_icc = src_profile.get("icc_data")
+  if not src_icc:
+    src_path = find_icc_file(src_name)
+    if not src_path: return False
+    src_icc = read_file(src_path)
+    src_profile["icc_data"] = src_icc
+  dst_icc = dst_profile.get("icc_data")
+  if not dst_icc:
+    dst_path = find_icc_file(dst_name)
+    if not dst_path: return False
+    dst_icc = read_file(dst_path)
+    dst_profile["icc_data"] = dst_icc
+  image = src_profile["from_linear"](image)
+  image_bytes = (image * 255).astype(np.uint8)
+  undo_bytes = image_bytes.astype(np.float32)
+  float_ratio = np.where(image_bytes > 0, undo_bytes / (image_bytes + 1e-6), image_bytes)
+  image_bytes = cv2.cvtColor(image_bytes, cv2.COLOR_BGR2RGB)
+  image_pil = Image.fromarray(image_bytes, mode="RGB")
+  converted_pil = ImageCms.profileToProfile(
+    image_pil,
+    ImageCms.ImageCmsProfile(io.BytesIO(src_icc)),
+    ImageCms.ImageCmsProfile(io.BytesIO(dst_icc)),
+    outputMode="RGB"
+  )
+  converted = np.asarray(converted_pil).astype(np.float32)
+  converted = cv2.cvtColor(converted, cv2.COLOR_RGB2BGR)
+  converted = converted / 255
+  corrected = converted / np.maximum(float_ratio, 1e-6)
+  corrected = np.where((converted == 0) | (float_ratio < 0.5), converted, corrected)
+  converted = np.clip(corrected, 0, 1).astype(np.float32)
+  converted = dst_profile["to_linear"](converted)
+  return converted
+
+
 def set_logging_level(level):
   """Sets the logging level."""
   logger.setLevel(level)
@@ -3590,7 +3665,7 @@ def make_ap_args():
   ap.add_argument("--output", "-o", default="output.jpg", metavar="path",
                   help="output image path (dafault=output.jpg)")
   ap.add_argument("--raw-preset", default="raw-std", metavar="name",
-                  help="preset for raw development: raw-muted, raw-std, raw-vivid")
+                  help="preset for raw development: raw-muted, raw-std (default), raw-vivid")
   ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
                   help="choose a white balance:"
                   " none (default), auto, auto-scene, daylight, cloudy, shade, tungsten,"
@@ -3662,6 +3737,9 @@ def make_ap_args():
                   help="apply vignetting by the light reduction ratio at the corners")
   ap.add_argument("--caption", default="", metavar="expr",
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
+  ap.add_argument("--gamut", default="", metavar="name",
+                  help="convert gamut using ICC profiles:"
+                  " srgb, adobe, prophoto, displayp3, bt2020")
   ap.add_argument("--input-video-fps", type=float, default=1, metavar="num",
                   help="input video files with the FPS")
   ap.add_argument("--output-video-fps", type=float, default=1, metavar="num",
@@ -3968,15 +4046,35 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
     logger.info(f"Applying auto restoration of brightness")
     merged_image = adjust_exposure_image(merged_image, mean_brightness)
   merged_image = edit_image(merged_image, args)
+  bits = bits_list[0]
+  icc_name = icc_names[0]
+  if args.gamut:
+    norm_gamut = args.gamut.lower()
+    if norm_gamut in ["standard", "std", "s"]:
+      norm_gamut = "srgb"
+    elif norm_gamut in ["adobe", "adb", "a"]:
+      norm_gamut = "adobe_rgb"
+    elif norm_gamut in ["prophoto", "pro", "p"]:
+      norm_gamut = "prophoto_rgb"
+    elif norm_gamut in ["displayp3", "disp", "d", "p3"]:
+      norm_gamut = "display_p3"
+    elif norm_gamut in ["bt2020", "rec2020", "2020"]:
+      norm_gamut = "bt2020"
+    if icc_name == norm_gamut:
+      logger.info(f"Preserving color gamut: {icc_name}")
+    else:
+      logger.info(f"Converting color gamut from {icc_name} to {norm_gamut}")
+      merged_image = convert_gamut_image(merged_image, icc_name, norm_gamut)
+      icc_name = norm_gamut
   logger.info(f"Saving the output file as an image")
   ext = os.path.splitext(args.output)[1].lower()
-  save_image(args.output, merged_image, bits_list[0], icc_names[0])
+  save_image(args.output, merged_image, bits, icc_name)
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
     if ext in EXTS_IMAGE_EXIF:
       copy_metadata(args.inputs[0], args.output)
     if ext in EXTS_IMAGE_EXIF:
-      if not attach_icc_profile(args.output, icc_names[0]):
+      if not attach_icc_profile(args.output, icc_name):
         copy_icc_profile(args.inputs[0], args.output)
 
 
