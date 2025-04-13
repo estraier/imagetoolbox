@@ -3822,9 +3822,9 @@ def main():
         logger.debug(f"{old_num - len(images)} of {old_num} images are removed")
   ext = os.path.splitext(args.output)[1].lower()
   if ext in EXTS_NPZ:
-    postprocess_npz(args, images)
+    postprocess_npz(args, images, icc_names)
   elif ext in EXTS_VIDEO:
-    postprocess_video(args, images)
+    postprocess_video(args, images, icc_names)
   elif ext in EXTS_IMAGE:
     postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brightness)
   else:
@@ -3905,20 +3905,30 @@ def load_input_images(args):
   return images_data
 
 
-def postprocess_npz(args, images):
+def postprocess_npz(args, images, icc_names):
   """Postprocess images as a NumPy compressed."""
   assert all(image.dtype == np.float32 for image in images)
-  images = [edit_image(image, args) for image in images]
+  edited_images = []
+  for image, icc_name in zip(images, icc_names):
+    image = edit_image(image, args)
+    if icc_name != "srgb":
+      image = convert_gamut_image(image, icc_name, "srgb")
+    edited_images.append(image)
   logger.info(f"Saving the output file as a NumPy compressed")
-  save_npz(args.output, images)
+  save_npz(args.output, edited_images)
 
 
-def postprocess_video(args, images):
+def postprocess_video(args, images, icc_names):
   """Postprocess images as a video."""
   assert all(image.dtype == np.float32 for image in images)
-  images = [edit_image(image, args) for image in images]
+  edited_images = []
+  for image, icc_name in zip(images, icc_names):
+    image = edit_image(image, args)
+    if icc_name != "srgb":
+      image = convert_gamut_image(image, icc_name, "srgb")
+    edited_images.append(image)
   logger.info(f"Saving the output file as a video")
-  save_video(args.output, images, args.output_video_fps)
+  save_video(args.output, edited_images, args.output_video_fps)
   if has_command(CMD_EXIFTOOL):
     logger.info(f"Copying metadata")
     copy_metadata(args.inputs[0], args.output)
