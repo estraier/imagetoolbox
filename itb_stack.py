@@ -174,19 +174,40 @@ def check_icc_profile_name(file_path):
       if not icc_bytes:
         return "srgb"
       profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
-      desc = ImageCms.getProfileDescription(profile).lower()
-      if "prophoto" in desc:
-        return "prophoto_rgb"
-      elif "adobe" in desc:
-        return "adobe_rgb"
-      elif "display p3" in desc or "displayp3" in desc:
-        return "display_p3"
-      elif "srgb" in desc:
-        return "srgb"
-      else:
-        return "srgb"
-  except Exception as e:
+      desc = ImageCms.getProfileDescription(profile).strip().lower()
+  except Exception:
     return "srgb"
+  name = "srgb"
+  if "prophoto" in desc:
+    name = "prophoto_rgb"
+    ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+  elif "adobe" in desc:
+    name = "adobe_rgb"
+    ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+  elif "display p3" in desc or "displayp3" in desc:
+    name = "display_p3"
+    ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+  elif "srgb" in desc:
+    name = "srgb"
+    ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+  return name
+
+
+def attach_icc_profile(file_path, icc_name):
+  """Attaches the ICC profile to the image file."""
+  item = ICC_PROFILES.get(icc_name)
+  if not item:
+    return False
+  profile = item.get("icc_data")
+  if not profile:
+    return False
+  try:
+    logger.debug(f"saving ICC {icc_name}")
+    with Image.open(file_path) as img:
+      img.save(file_path, icc_profile=profile)
+  except Exception:
+    return False
+  return True
 
 
 def load_image(file_path):
@@ -853,7 +874,6 @@ def adjust_white_balance_image(image, expr="auto"):
       faces = detect_faces_image(image)
       if faces:
         mean_r, mean_g, mean_b = compute_auto_white_balance_face_factors(image, faces)
-        print(mean_r, mean_g, mean_b)
         done = True
     if not done:
       kwargs = {}
@@ -3943,8 +3963,9 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
     logger.info(f"Copying metadata")
     if ext in EXTS_IMAGE_EXIF:
       copy_metadata(args.inputs[0], args.output)
-    if ext in EXTS_IMAGE_EXIF and icc_names[0] != 'srgb':
-      copy_icc_profile(args.inputs[0], args.output)
+    if ext in EXTS_IMAGE_EXIF:
+      if not attach_icc_profile(args.output, icc_names[0]):
+        copy_icc_profile(args.inputs[0], args.output)
 
 
 def edit_image(image, args):
