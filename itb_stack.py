@@ -2199,7 +2199,7 @@ def fill_black_margin_image(image):
 
 PRESETS = {
   "raw-muted": {
-    "color-denoise": True,
+    "auto-denoise": [400, 1600, 6400],
     "stretch": (0.90, 99.7),
     "sigmoid": (2.8, 0.45),
     "slog": 0.3,
@@ -2207,7 +2207,7 @@ PRESETS = {
     "vibrance": 0.1,
   },
   "raw-std": {
-    "color-denoise": True,
+    "auto-denoise": [400, 1600, 6400],
     "stretch": (0.92, 99.5),
     "sigmoid": (3.0, 0.45),
     "slog": 0.4,
@@ -2215,7 +2215,7 @@ PRESETS = {
     "vibrance": 0.2,
   },
   "raw-vivid": {
-    "color-denoise": True,
+    "auto-denoise": [400, 1600, 6400],
     "stretch": (0.95, 99.3),
     "sigmoid": (3.3, 0.45),
     "slog": 0.6,
@@ -2247,13 +2247,23 @@ PRESETS = {
 }
 
 
-def apply_preset_image(image, name):
+def apply_preset_image(image, name, meta):
   """Applies a preset on the image."""
   preset = PRESETS.get(name)
   if preset is None:
     raise ValueError(f"Unknown preset: {name}")
-  if "color-denoise" in preset:
-    image = color_denoise_image(image)
+  color_denoise_isos = preset.get("auto-denoise")
+  if color_denoise_isos:
+    iso = meta.get("_sv_")
+    if iso:
+      blur_level = 0
+      for i, base_iso in enumerate(color_denoise_isos):
+        if iso >= base_iso:
+          blur_level = i + 1
+    else:
+      blur_level = 2
+    if blur_level > 0:
+      image = color_denoise_image(image, blur_level)
   stretch = preset.get("stretch")
   if stretch:
     image = stretch_contrast_image(image, stretch[0], stretch[1])
@@ -3751,8 +3761,7 @@ def main():
       raise ValueError(f"{path} doesn't exist")
   logger.info(f"Loading the input files")
   images_data = load_input_images(args)
-  images, bits_list, icc_names = zip(*images_data)
-  meta_list = [get_metadata(input_path) for input_path in args.inputs]
+  images, bits_list, icc_names, meta_list = zip(*images_data)
   if logger.isEnabledFor(logging.DEBUG):
     log_image_stats(images[0][0], "first")
   brightness_values = np.array([compute_brightness(image) for image in images])
@@ -3851,52 +3860,55 @@ def load_input_images(args):
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-      images_data.append((image, bits, icc_name))
+      images_data.append((image, bits, icc_name, {}))
     elif ext in EXTS_NPZ:
       npz_image_data = load_npz(input_path, mem_allowance)
       for image, bits in npz_image_data:
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-        images_data.append((image, bits, "srgb"))
+        images_data.append((image, bits, "srgb", {}))
     elif ext in EXTS_VIDEO:
       video_image_data = load_video(input_path, mem_allowance, args.input_video_fps)
       for image, bits in video_image_data:
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-        images_data.append((image, bits, "srgb"))
+        images_data.append((image, bits, "srgb", {}))
     elif ext in EXTS_IMAGE_HEIF:
+      meta = get_metadata(input_path)
       for image, bits, icc_name in load_images_heif(input_path):
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-        images_data.append((image, bits, icc_name))
+        images_data.append((image, bits, icc_name, meta))
     elif ext in EXTS_IMAGE_RAW:
+      meta = get_metadata(input_path)
       image, bits, icc_name = load_image_raw(input_path)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
       if args.raw_preset and args.raw_preset != "none":
-        image = apply_preset_image(image, args.raw_preset)
-      images_data.append((image, bits, icc_name))
+        image = apply_preset_image(image, args.raw_preset, meta)
+      images_data.append((image, bits, icc_name, meta))
     elif ext in EXTS_IMAGE:
+      meta = get_metadata(input_path)
       image, bits, icc_name = load_image(input_path)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-      images_data.append((image, bits, icc_name))
+      images_data.append((image, bits, icc_name, meta))
     else:
       raise ValueError(f"Unsupported file format: {ext}")
   return images_data
 
 
-def postprocess_npz(args, images, icc_names):
+def postprocess_npz(args, images, meta_list, icc_names):
   """Postprocess images as a NumPy compressed."""
   assert all(image.dtype == np.float32 for image in images)
   edited_images = []
-  for image, icc_name in zip(images, icc_names):
-    image = edit_image(image, args)
+  for image, meta, icc_name in zip(images, meta_list, icc_names):
+    image = edit_image(image, meta, args)
     if icc_name != "srgb":
       image = convert_gamut_image(image, icc_name, "srgb")
     edited_images.append(image)
@@ -3904,12 +3916,12 @@ def postprocess_npz(args, images, icc_names):
   save_npz(args.output, edited_images)
 
 
-def postprocess_video(args, images, icc_names):
+def postprocess_video(args, images, meta_list, icc_names):
   """Postprocess images as a video."""
   assert all(image.dtype == np.float32 for image in images)
   edited_images = []
-  for image, icc_name in zip(images, icc_names):
-    image = edit_image(image, args)
+  for image, meta, icc_name in zip(images, meta_list, icc_names):
+    image = edit_image(image, meta, args)
     if icc_name != "srgb":
       image = convert_gamut_image(image, icc_name, "srgb")
     edited_images.append(image)
@@ -4041,9 +4053,10 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
   if be_adjusted and not args.no_restore:
     logger.info(f"Applying auto restoration of brightness")
     merged_image = adjust_exposure_image(merged_image, mean_brightness)
-  merged_image = edit_image(merged_image, args)
   bits = bits_list[0]
+  meta = meta_list[0]
   icc_name = icc_names[0]
+  merged_image = edit_image(merged_image, meta, args)
   if args.gamut:
     norm_gamut = args.gamut.lower()
     if norm_gamut in ["standard", "std", "s"]:
@@ -4074,12 +4087,12 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
         copy_icc_profile(args.inputs[0], args.output)
 
 
-def edit_image(image, args):
+def edit_image(image, meta, args):
   """Edits an image."""
   assert image.dtype == np.float32
   if args.preset and args.preset != "none":
     logger.info(f"Applying preset: {args.preset}")
-    image = apply_preset_image(image, args.preset)
+    image = apply_preset_image(image, args.preset, meta)
   if args.fill_margin:
     logger.info(f"Filling the margin")
     image = fill_black_margin_image(image)

@@ -369,7 +369,8 @@ class TestItbStack(unittest.TestCase):
   def test_apply_preset_image(self):
     image = generate_test_image()
     for name in ["raw-std", "light", "vivid"]:
-      processed = apply_preset_image(image, name)
+      meta = {"_sv_": 10000.0}
+      processed = apply_preset_image(image, name, meta)
       self.assertEqual(processed.shape, image.shape)
 
   def test_fill_black_margin_image(self):
