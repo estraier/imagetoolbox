@@ -2559,12 +2559,15 @@ def optimize_exposure_image(image, strength, upper_pecentile=99, upper_target=0.
                             gamma_scale=3.0, log_scale=None):
   """Optimizes exposure of the image automatically."""
   strength = min(strength, 1.0)
-  upper = np.percentile(image, upper_pecentile)
+  h, w = image.shape[:2]
+  margin_h = int(h * 0.02)
+  margin_w = int(w * 0.02)
+  trimmed = image[margin_h:h - margin_h, margin_w:w - margin_w]
+  upper = np.percentile(trimmed, upper_pecentile)
   if upper_target > upper:
     adjusted_target = upper + (upper_target - upper) * strength
     gain = adjusted_target / max(upper, 0.1)
     image = np.clip(image * gain, 0, 1)
-  h, w = image.shape[:2]
   if mask == "oval":
     mask_image = generate_oval_mask(image, mask_center, mask_reach, mask_decay)
   elif mask == "rect":
