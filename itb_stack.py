@@ -632,12 +632,28 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
   return np.clip(stretched, 0.0, 1.0)
 
 
-def apply_linear_image(image, factor):
+def apply_rolloff(image, percentile=99.8):
+  """Applies highlight rolloff."""
+  assert image.dtype == np.float32
+  max_val = np.percentile(image, percentile)
+  if max_val <= 1.0:
+    return image
+  inflection = (1.0 + 1.0 / max_val) / 2.0
+  image = image.copy()
+  mask = image > inflection
+  scale = (1.0 - inflection) / (max_val - inflection + 1e-6)
+  image[mask] = inflection + (image[mask] - inflection) * scale
+  return np.clip(image, 0.0, 1.0)
+
+
+def apply_linear_image(image, factor, rolloff=True):
   """Adjusts image brightness by a linear multiplier."""
   assert image.dtype == np.float32
   if factor < 0:
     return factor
   image = image * factor
+  if rolloff:
+    image = apply_rolloff(image)
   return np.clip(image, 0, 1).astype(np.float32)
 
 
@@ -2274,6 +2290,7 @@ def apply_preset_image(image, name, meta):
   linear = preset.get("linear")
   if linear:
     image = apply_linear_image(image, linear)
+  image = apply_rolloff(image)
   gamma = preset.get("gamma")
   if gamma:
     image = apply_gamma_image(image, gamma)
