@@ -1529,7 +1529,6 @@ def merge_images_debevec(images, meta_list):
                  for image in images]
   merger = cv2.createMergeDebevec()
   hdr = merger.process(byte_images, times=exposures)
-  hdr = np.clip(hdr, 0, 1)
   return hdr
 
 
@@ -1547,7 +1546,6 @@ def merge_images_robertson(images, meta_list):
                  for image in images]
   merger = cv2.createMergeRobertson()
   hdr = merger.process(byte_images, times=exposures)
-  hdr = np.clip(hdr, 0, 1)
   return hdr
 
 
