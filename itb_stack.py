@@ -294,7 +294,7 @@ def load_image_raw(file_path):
       highlight_mode=rawpy.HighlightMode.Blend,
       gamma=None,
       user_flip=0,
-      fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full,
+      fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Off,
     )
     image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     image = image.astype(np.float32) / 65535.0
@@ -1529,6 +1529,7 @@ def merge_images_debevec(images, meta_list):
                  for image in images]
   merger = cv2.createMergeDebevec()
   hdr = merger.process(byte_images, times=exposures)
+  hdr = np.clip(hdr, 0, 1)
   return hdr
 
 
@@ -1546,6 +1547,7 @@ def merge_images_robertson(images, meta_list):
                  for image in images]
   merger = cv2.createMergeRobertson()
   hdr = merger.process(byte_images, times=exposures)
+  hdr = np.clip(hdr, 0, 1)
   return hdr
 
 
@@ -1556,20 +1558,20 @@ def merge_images_mertens(images):
                  for image in images]
   merger = cv2.createMergeMertens()
   hdr = merger.process(byte_images)
-  hdr = normalize_negative_image(hdr)
+  hdr = remove_negative_noises(hdr)
   return hdr
 
 
-def normalize_negative_image(image, clip_percentile=2.0):
+def remove_negative_noises(image, clip_percentile=2.0):
   """Normalizes negaive pixels."""
   assert image.dtype == np.float32
   image = cv2.GaussianBlur(image, (5, 5), 0)
   min_val = np.percentile(image, clip_percentile)
   if min_val > -0.01:
-    return np.clip(image, 0, None)
+    return np.clip(image, 0, 1.0)
   image = np.clip(image, min_val, None)
   image -= min_val
-  return np.clip(image, 0, None)
+  return np.clip(image, 0, 1.0)
 
 
 def z_score_normalization(image):
