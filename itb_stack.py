@@ -2220,15 +2220,15 @@ def fill_black_margin_image(image):
 PRESETS = {
   "raw-muted": {
     "auto-denoise": [400, 1600, 6400],
-    "stretch": (0.90, 99.7),
-    "sigmoid": (2.8, 0.45),
+    "stretch": (0.90, 99.6),
+    "sigmoid": (2.7, 0.45),
     "slog": 0.4,
     "saturation": 1.1,
     "vibrance": 0.1,
   },
   "raw-std": {
     "auto-denoise": [400, 1600, 6400],
-    "stretch": (0.92, 99.5),
+    "stretch": (0.92, 99.4),
     "sigmoid": (3.0, 0.45),
     "slog": 0.5,
     "saturation": 1.2,
@@ -2236,7 +2236,7 @@ PRESETS = {
   },
   "raw-vivid": {
     "auto-denoise": [400, 1600, 6400],
-    "stretch": (0.95, 99.3),
+    "stretch": (0.94, 99.2),
     "sigmoid": (3.3, 0.45),
     "slog": 0.6,
     "saturation": 1.3,
