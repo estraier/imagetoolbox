@@ -454,6 +454,8 @@ def get_metadata(path):
           meta["_fv_"] = parse_numeric(str(value))
         if name == "ISO":
           meta["_sv_"] = parse_numeric(str(value))
+        if name == "ExposureCompensation":
+          meta["_xc_"] = parse_numeric(str(value))
   try:
     ext = os.path.splitext(path)[1].lower()
     if ext in EXTS_IMAGE_EXIF:
@@ -466,21 +468,19 @@ def get_metadata(path):
             meta["_fv_"] = parse_numeric(str(value))
           if name == "EXIF ISOSpeedRatings":
             meta["_sv_"] = parse_numeric(str(value))
+          if name == "EXIF ExposureCompensation":
+            meta["_xc_"] = parse_numeric(str(value))
   except:
     pass
-  return meta
-
-
-def get_light_value(meta):
-  """Gets the luminance value from metadata."""
   tv = meta.get("_tv_")
   fv = meta.get("_fv_")
-  sv = meta.get("_sv_") or 100.0
+  sv = meta.get("_sv_", 100.0)
   if tv and fv:
     ev = math.log2(1 / tv / fv / fv)
     lv = ev + math.log2(sv / 100)
-    return lv
-  return None
+    meta["_ev_"] = ev
+    meta["_lv_"] = lv
+  return meta
 
 
 def copy_metadata(source_path, target_path):
@@ -651,10 +651,10 @@ def apply_linear_image(image, factor, rolloff=True):
   assert image.dtype == np.float32
   if factor < 0:
     return factor
-  image = image * factor
-  if rolloff:
+  image *= factor
+  if rolloff and factor > 0:
     image = apply_rolloff(image)
-  return np.clip(image, 0, 1).astype(np.float32)
+  return np.clip(image, 0, 1)
 
 
 def apply_gamma_image(image, gamma):
@@ -663,24 +663,24 @@ def apply_gamma_image(image, gamma):
   if gamma < 1e-6:
     return image
   image = np.power(image, 1 / gamma)
-  return np.clip(image, 0, 1).astype(np.float32)
+  return np.clip(image, 0, 1)
 
 
 def apply_scaled_log_image(image, factor):
   """Adjust image brightness by a scaled log transformation."""
   assert image.dtype == np.float32
   if factor > 1e-6:
-    image = np.log1p(image * factor) / np.log1p(factor)
+    image = np.log1p(image * np.float32(factor)) / np.log1p(np.float32(factor))
   elif factor < -1e-6:
     factor = -factor
-    image = (np.expm1(image * np.log1p(factor))) / factor
-  return np.clip(image, 0, 1).astype(np.float32)
+    image = (np.expm1(image * np.float32(np.log1p(factor)))) / np.float32(factor)
+  return np.clip(image, 0, 1)
 
 
 def naive_sigmoid(x, gain, mid):
   """Computes naive sigmod conversion."""
-  image = 1.0 / (1.0 + np.exp((mid - x) * gain))
-  return image.astype(np.float32)
+  image = np.float32(1.0) / np.float32(1.0 + np.exp((mid - x) * gain))
+  return image
 
 
 def naive_inverse_sigmoid(x, gain, mid):
@@ -723,7 +723,7 @@ def apply_sigmoid_image(image, gain, mid=0.5):
     max_val = naive_inverse_sigmoid(1.0, gain, mid)
     diff = max_val - min_val
     image = (naive_inverse_sigmoid(image, gain, mid) - min_val) / diff
-  return np.clip(image, 0, 1).astype(np.float32)
+  return np.clip(image, 0, 1)
 
 
 def compute_auto_white_balance_factors(image, edge_weight=0.5, luminance_weight=0.5):
@@ -1525,22 +1525,24 @@ def merge_images_weighted_average(images, meta_list):
   if None in f_numbers:
     logger.debug(f"missing F-numbers")
     return np.mean(images, axis=0)
-  logger.debug(f"F-numbers: {f_numbers}")
+  logger.debug(f"f-numbers: {[float(f'{x:.2f}') for x in f_numbers]}")
   weights = calculate_stf_weights(f_numbers)
-  logger.debug(f"weights: {weights}")
-  return np.average(images, axis=0, weights=weights)
+  logger.debug(f"weights: {[float(f'{x:.2f}') for x in weights]}")
+  return np.average(images, axis=0, weights=weights).astype(np.float32)
 
 
 def merge_images_debevec(images, meta_list):
   """Merges images by Debevec's method."""
   assert all(image.dtype == np.float32 for image in images)
-  light_values = [get_light_value(meta) for meta in meta_list]
+  light_values = [meta.get("_lv_") for meta in meta_list]
   if None in light_values:
     brightness_values = np.array([compute_brightness(image) for image in images])
     exposures = brightness_values / max(np.min(brightness_values), 0.0001)
   else:
+    logger.debug(f"light-values: {[float(f'{x:.2f}') for x in light_values]}")
     luminances = np.array([1 / (2 ** lv) for lv in light_values]).astype(np.float32)
     exposures = luminances / max(np.min(luminances), 0.0001)
+  logger.debug(f"exposures: {[float(f'{x:.2f}') for x in exposures]}")
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
   merger = cv2.createMergeDebevec()
@@ -1551,13 +1553,15 @@ def merge_images_debevec(images, meta_list):
 def merge_images_robertson(images, meta_list):
   """Merges images by Robertson's method."""
   assert all(image.dtype == np.float32 for image in images)
-  light_values = [get_light_value(meta) for meta in meta_list]
+  light_values = [meta.get("_lv_") for meta in meta_list]
   if None in light_values:
     brightness_values = np.array([compute_brightness(image) for image in images])
     exposures = brightness_values / max(np.min(brightness_values), 0.0001)
   else:
+    logger.debug(f"light-values: {[float(f'{x:.2f}') for x in light_values]}")
     luminances = np.array([1 / (2 ** lv) for lv in light_values]).astype(np.float32)
     exposures = luminances / max(np.min(luminances), 0.0001)
+  logger.debug(f"exposures: {[float(f'{x:.2f}') for x in exposures]}")
   byte_images = [(np.clip(image, 0, 1) * 255).astype(np.uint8)
                  for image in images]
   merger = cv2.createMergeRobertson()
@@ -2242,6 +2246,15 @@ PRESETS = {
     "saturation": 1.3,
     "vibrance": 0.3,
   },
+  "raw-bracket": {
+    "auto-denoise": [400, 1600, 6400],
+    "stretch": (0.6, 99.0),
+    "sigmoid": (3.0, 0.4),
+    "slog": 0.5,
+    "saturation": 1.2,
+    "vibrance": 0.2,
+    "lv-offset": True,
+  },
   "light": {
     "linear": 1.1,
     "gamma": 1.1,
@@ -2300,6 +2313,12 @@ def apply_preset_image(image, name, meta):
   sigmoid = preset.get("sigmoid")
   if sigmoid:
     image = sigmoidal_contrast_image(image, gain=sigmoid[0], mid=sigmoid[1])
+  if preset.get("lv-offset"):
+    offset = meta.get("_lv_offset_")
+    if offset and (offset > 0.1 or offset < -0.1):
+      image *= 2 ** offset
+      if offset > 0:
+        image = apply_rolloff(image)
   saturation = preset.get("saturation")
   if saturation:
     image = saturate_image_linear(image, saturation)
@@ -2710,7 +2729,7 @@ def convert_grayscale_image(image, expr):
     gray_image = normalize_edge_image(gray_image)
     h, w = gray_image.shape[:2]
     attractor = parse_coordinate(params.get("attractor") or "0.5,0.5")
-    attractor_weight = float(params.get("attractor_weight") or "0")
+    attractor_weight = float(params.get("attractor_weight", "0"))
     if float(attractor_weight) < 0:
       tiles = []
       unit_size = (w * h) ** 0.5
@@ -3695,7 +3714,11 @@ def make_ap_args():
   ap.add_argument("--output", "-o", default="output.jpg", metavar="path",
                   help="output image path (dafault=output.jpg)")
   ap.add_argument("--raw-preset", default="raw-std", metavar="name",
-                  help="preset for raw development: raw-muted, raw-std (default), raw-vivid")
+                  help="preset for raw development:"
+                  " raw-muted, raw-std (default), raw-vivid, raw-bracket")
+  ap.add_argument("--raw-preset-bracket", default="raw-bracket", metavar="name",
+                  help="preset for raw development:"
+                  " raw-muted, raw-std (default), raw-vivid, raw-bracket")
   ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
                   help="choose a white balance:"
                   " none (default), auto, auto-scene, daylight, cloudy, shade, tungsten,"
@@ -3851,9 +3874,9 @@ def main():
         logger.debug(f"{old_num - len(images)} of {old_num} images are removed")
   ext = os.path.splitext(args.output)[1].lower()
   if ext in EXTS_NPZ:
-    postprocess_npz(args, images, icc_names)
+    postprocess_npz(args, images, meta_list, icc_names)
   elif ext in EXTS_VIDEO:
-    postprocess_video(args, images, icc_names)
+    postprocess_video(args, images, meta_list, icc_names)
   elif ext in EXTS_IMAGE:
     postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brightness)
   else:
@@ -3918,12 +3941,11 @@ def load_input_images(args):
         images_data.append((image, bits, icc_name, meta))
     elif ext in EXTS_IMAGE_RAW:
       meta = get_metadata(input_path)
+      meta["_is_raw_"] = True
       image, bits, icc_name = load_image_raw(input_path)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-      if args.raw_preset and args.raw_preset != "none":
-        image = apply_preset_image(image, args.raw_preset, meta)
       images_data.append((image, bits, icc_name, meta))
     elif ext in EXTS_IMAGE:
       meta = get_metadata(input_path)
@@ -3934,7 +3956,44 @@ def load_input_images(args):
       images_data.append((image, bits, icc_name, meta))
     else:
       raise ValueError(f"Unsupported file format: {ext}")
-  return images_data
+  is_bracket = check_bracket(images_data)
+  mod_images_data = []
+  for item in images_data:
+    image, bits, icc_name, meta = item
+    if meta.get("_is_raw_"):
+      preset = args.raw_preset_bracket if is_bracket else args.raw_preset
+      if preset and preset != "none":
+        image = apply_preset_image(image, args.raw_preset_bracket, meta)
+    mod_images_data.append((image, bits, icc_name, meta))
+  return mod_images_data
+
+
+def check_bracket(images_data):
+  """Checks if images were taken by exposure bracket."""
+  lvs = []
+  xcs = []
+  for item in images_data:
+    meta = item[3]
+    lv = meta.get("_lv_")
+    if lv is not None:
+      lvs.append(lv)
+    xcs.append(meta.get("_xc_", 0.0))
+  is_bracket = False
+  if lvs and max(lvs) - min(lvs) > 0.6:
+    mean = np.mean(lvs)
+    for item, lv in zip(images_data, lvs):
+      meta = item[3]
+      lv = meta.get("_lv_", mean)
+      meta["_lv_offset_"] = lv - mean
+    return True
+  if xcs and max(xcs) - min(xcs) > 0.6:
+    mean = np.mean(xcs)
+    for item, lv in zip(images_data, xcs):
+      meta = item[3]
+      xc = meta.get("_xc_", mean)
+      meta["_lv_offset_"] = xc - mean
+    return True
+  return False
 
 
 def postprocess_npz(args, images, meta_list, icc_names):
