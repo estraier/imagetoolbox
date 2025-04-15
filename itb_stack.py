@@ -2312,7 +2312,7 @@ def apply_preset_image(image, name, meta):
     linear = 1
     image = stretch_contrast_image(image, gain, stretch[1], clip=False)
   if linear != 1:
-    image = apply_linear_image(image, linear, clip=False)
+    image = apply_linear_image(image, linear, rolloff=False, clip=False)
   image = apply_rolloff(image)
   gamma = preset.get("gamma")
   if gamma:
