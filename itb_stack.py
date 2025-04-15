@@ -616,7 +616,7 @@ def compute_brightness(image):
 
 
 def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
-                           lower_target=0.0, lower_percentile=-1):
+                           lower_target=0.0, lower_percentile=-1, clip=True):
   """Stretches contrast of the image."""
   assert image.dtype == np.float32
   h, w = image.shape[:2]
@@ -627,9 +627,11 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
   upper = np.percentile(gray, upper_percentile) if upper_percentile >= 0 else 1.0
   lower = np.percentile(gray, lower_percentile) if lower_percentile >= 0 else 0.0
   scale = (upper_target - lower_target) / max(upper - lower, 1e-6)
-  bias = lower_target - lower * scale
-  stretched = image * scale + bias
-  return np.clip(stretched, 0.0, 1.0)
+  bias = np.float32(lower_target - lower * scale)
+  stretched = np.float32(image * scale + bias)
+  if clip:
+    stretched = np.clip(stretched, 0.0, 1.0)
+  return stretched
 
 
 def apply_rolloff(image, percentile=99.8):
@@ -637,7 +639,7 @@ def apply_rolloff(image, percentile=99.8):
   assert image.dtype == np.float32
   max_val = np.percentile(image, percentile)
   if max_val <= 1.0:
-    return image
+    return np.clip(image, 0.0, 1.0)
   inflection = (1.0 + 1.0 / max_val) / 2.0
   image = image.copy()
   mask = image > inflection
@@ -646,7 +648,7 @@ def apply_rolloff(image, percentile=99.8):
   return np.clip(image, 0.0, 1.0)
 
 
-def apply_linear_image(image, factor, rolloff=True):
+def apply_linear_image(image, factor, rolloff=True, clip=True):
   """Adjusts image brightness by a linear multiplier."""
   assert image.dtype == np.float32
   if factor < 0:
@@ -654,7 +656,9 @@ def apply_linear_image(image, factor, rolloff=True):
   image *= factor
   if rolloff and factor > 0:
     image = apply_rolloff(image)
-  return np.clip(image, 0, 1)
+  if clip:
+    image = np.clip(image, 0, 1)
+  return image
 
 
 def apply_gamma_image(image, gamma):
@@ -2298,11 +2302,17 @@ def apply_preset_image(image, name, meta):
     if blur_level > 0:
       image = masked_denoise_image(image, blur_level, blur_level)
   stretch = preset.get("stretch")
+  linear = preset.get("linear", 1.0)
+  if preset.get("lv-offset"):
+    offset = meta.get("_lv_offset_", 0)
+    if offset > 0.1 or offset < -0.1:
+      linear *= 2 ** offset
   if stretch:
-    image = stretch_contrast_image(image, stretch[0], stretch[1])
-  linear = preset.get("linear")
-  if linear:
-    image = apply_linear_image(image, linear)
+    gain = stretch[0] * linear
+    linear = 1
+    image = stretch_contrast_image(image, gain, stretch[1], clip=False)
+  if linear != 1:
+    image = apply_linear_image(image, linear, clip=False)
   image = apply_rolloff(image)
   gamma = preset.get("gamma")
   if gamma:
@@ -2313,12 +2323,6 @@ def apply_preset_image(image, name, meta):
   sigmoid = preset.get("sigmoid")
   if sigmoid:
     image = sigmoidal_contrast_image(image, gain=sigmoid[0], mid=sigmoid[1])
-  if preset.get("lv-offset"):
-    offset = meta.get("_lv_offset_")
-    if offset and (offset > 0.1 or offset < -0.1):
-      image *= 2 ** offset
-      if offset > 0:
-        image = apply_rolloff(image)
   saturation = preset.get("saturation")
   if saturation:
     image = saturate_image_linear(image, saturation)
@@ -4041,14 +4045,16 @@ def log_image_stats(image, prefix):
   has_nan = np.isnan(image).any()
   if has_nan:
     image = fix_overflown_image(image)
-  min = np.min(image)
-  max = np.max(image)
+  minv = np.min(image)
+  maxv = np.max(image)
   mean = np.mean(image)
   stddev = np.std(image)
   skew = np.mean((image - np.mean(image))**3) / (np.std(image)**3)
   kurt = np.mean((image - np.mean(image))**4) / np.std(image)**4 - 3
-  logger.debug(f"{prefix} stats: min={min:.3f}, max={max:.3f}, mean={mean:.3f},"
-               f" stddev={stddev:.3f}, skew={skew:.3f}, kurt={kurt:.3f}, nan={has_nan}")
+  p99 = np.percentile(image, 99)
+  logger.debug(f"{prefix} stats: min={minv:.3f}, max={maxv:.3f}, mean={mean:.3f},"
+               f" stddev={stddev:.3f}, skew={skew:.3f}, kurt={kurt:.3f},"
+               f" p99={p99:.3f}, nan={has_nan}")
 
 
 def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brightness):
