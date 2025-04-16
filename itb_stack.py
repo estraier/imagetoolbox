@@ -634,13 +634,13 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
   return stretched
 
 
-def apply_rolloff(image, percentile=99.8):
+def apply_rolloff(image, asymptotic=0.5, percentile=99.8):
   """Applies highlight rolloff."""
   assert image.dtype == np.float32
   max_val = np.percentile(image, percentile)
   if max_val <= 1.0:
     return np.clip(image, 0.0, 1.0)
-  inflection = (1.0 + 1.0 / max_val) / 2.0
+  inflection = asymptotic + (1.0 - asymptotic) / max_val
   image = image.copy()
   mask = image > inflection
   scale = (1.0 - inflection) / (max_val - inflection + 1e-6)
@@ -648,14 +648,14 @@ def apply_rolloff(image, percentile=99.8):
   return np.clip(image, 0.0, 1.0)
 
 
-def apply_linear_image(image, factor, rolloff=True, clip=True):
+def apply_linear_image(image, factor, rolloff=0.5, clip=True):
   """Adjusts image brightness by a linear multiplier."""
   assert image.dtype == np.float32
   if factor < 0:
     return factor
   image *= factor
-  if rolloff and factor > 0:
-    image = apply_rolloff(image)
+  if rolloff is not None and factor > 1:
+    image = apply_rolloff(image, asymptotic=rolloff)
   if clip:
     image = np.clip(image, 0, 1)
   return image
@@ -1447,6 +1447,7 @@ def fix_overflown_image(image):
 
 def merge_images_average(images):
   """Merges images by average composition."""
+  return images[0]
   assert all(image.dtype == np.float32 for image in images)
   return np.mean(images, axis=0)
 
@@ -2949,13 +2950,17 @@ def convert_image_lcs_tricolor(image):
   return np.clip(rgb_restored, 0, 1)
 
 
-def saturate_image_linear(image, factor):
+def saturate_image_linear(image, factor, rolloff=0.7):
   """Saturates colors of the image by linear multiplication."""
   assert image.dtype == np.float32
   hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
   h, s, v = cv2.split(hsv)
   factor = min(max(0.01, factor), 100.0)
   s = s * factor
+  if rolloff is not None and factor > 1:
+    s = apply_rolloff(s, asymptotic=rolloff, percentile=99)
+  elif factor > 1:
+    s = np.clip(s, 0, 1)
   hsv = cv2.merge((h, s, v))
   mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
   return np.clip(mod_image, 0, 1).astype(np.float32)
@@ -4185,7 +4190,7 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
 def edit_image(image, meta, args):
   """Edits an image."""
   assert image.dtype == np.float32
-  presets = args.raw_preset.split(",")
+  presets = args.preset.split(",")
   for preset in presets:
     preset = preset.strip()
     if not preset or preset == "none": continue
