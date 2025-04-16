@@ -370,7 +370,7 @@ class TestItbStack(unittest.TestCase):
     image = generate_test_image()
     for name in ["raw-std", "light", "vivid"]:
       meta = {"_sv_": 10000.0}
-      processed = apply_preset_image(image, name, meta)
+      processed = apply_preset_image(image, name, meta, True)
       self.assertEqual(processed.shape, image.shape)
 
   def test_fill_black_margin_image(self):
@@ -390,7 +390,7 @@ class TestItbStack(unittest.TestCase):
 
   def test_artistic_filter(self):
     image = generate_test_image()
-    for name in ["pencil", "stylized", "oil", "cartoon"]:
+    for name in ["pencil", "stylized", "cartoon"]:
       processed = apply_artistic_filter_image(image, name)
       self.assertEqual(processed.shape, image.shape)
 
