@@ -634,12 +634,14 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
   return stretched
 
 
-def apply_rolloff(image, asymptotic=0.5, percentile=99.8):
+def apply_rolloff(image, asymptotic=0.5, saving_limit=4, percentile=99.8):
   """Applies highlight rolloff."""
   assert image.dtype == np.float32
   max_val = np.percentile(image, percentile)
   if max_val <= 1.0:
     return np.clip(image, 0.0, 1.0)
+  if max_val > saving_limit:
+    asymptotic = asymptotic ** (saving_limit / max_val)
   inflection = asymptotic + (1.0 - asymptotic) / max_val
   image = image.copy()
   mask = image > inflection
