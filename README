@@ -195,6 +195,7 @@ adjusted by applying presets.
 
   $ itb_stack.py input.dng -o output.jpg
   $ itb_stack.py input.dng -o output.jpg --raw-preset raw-vivid
+  $ itb_stack.py input.dng -o output.jpg --raw-preset +1.3,6500K
 
 Development of raw images taken by exposure bracketting is done while relative exposure difference
 is preserved; brighter images are kept brighter and darker images are kept darker relatively.
@@ -207,6 +208,7 @@ to offset exposure difference.
 The workflow of this command is the following.
 
   1: All input image files are loaded and converted to lenear RGB channels.
+       use --raw-preset to change the preset applied to RAW images.
   2: Optionally, white balance of each image is adjusted.
        use -wb or --white-balance to specify "auto" or RGB weights like 10,13,11
   3: Optionally, brightness of each image is adjusted to their average.
