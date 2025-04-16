@@ -193,8 +193,10 @@ Development of raw image files are also supported.  Available xtensions are ".cr
 ".nef", ".arw", ".dng", ".rw2", ".orf", ".raf", ".pef", and ".sr2".  Exposure and color are
 adjusted by applying presets.
 
-  $ itb_stack.py input.dng -o output.jpg
-  $ itb_stack.py input.dng -o output.jpg --raw-preset raw-vivid
+  $ itb_stack.py input.dng -o output.jpg                         # all default
+  $ itb_stack.py input.dng -o output.jpg --raw-preset raw-vivid  # strong contrast and color
+  $ itb_stack.py input.dng -o output.jpg --raw-std raw-std,lift  # lift shadows
+  $ itb_stack.py input.dng -o output.jpg --raw-std raw-std:+1.5  # +1.5EV exposure
 
 Development of raw images taken by exposure bracketting is done while relative exposure difference
 is preserved; brighter images are kept brighter and darker images are kept darker relatively.
