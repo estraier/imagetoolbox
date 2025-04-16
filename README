@@ -14,7 +14,7 @@ Python3 is required to run scripts.  Required libraries are the following.
 
 To install them, run the following command.
 
-  $ pip3 install opencv-python-headless numpy pillow exifread
+  $ pip3 install opencv-contrib-python numpy pillow exifread
 
 Optionally, those tools can be executed implicitly.
 
