@@ -198,7 +198,11 @@ adjusted by applying presets.
 
 Development of raw images taken by exposure bracketting is done while relative exposure difference
 is preserved; brighter images are kept brighter and darker images are kept darker relatively.
-The preset of bracketing development is set by --raw-preset-bracket option.
+Therefore, you can use those images as input for HDR.  If you use them for pseudo-STF, add -ax
+to offset exposure difference.
+
+  $ itb_stack.py input-*.dng -o output.jpg -m d -t r -a s  # for HDR
+  $ itb_stack.py input-*.dng -o output.jpg -ax -m w        # for pseudo-STF
 
 The workflow of this command is the following.
 
