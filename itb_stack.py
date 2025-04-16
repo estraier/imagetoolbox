@@ -2250,15 +2250,6 @@ PRESETS = {
     "saturation": 1.3,
     "vibrance": 0.3,
   },
-  "raw-bracket": {
-    "auto-denoise": [400, 1600, 6400],
-    "stretch": (0.6, 99.0),
-    "sigmoid": (3.0, 0.4),
-    "slog": 0.5,
-    "saturation": 1.2,
-    "vibrance": 0.2,
-    "lv-offset": True,
-  },
   "light": {
     "linear": 1.1,
     "gamma": 1.1,
@@ -2284,7 +2275,7 @@ PRESETS = {
 }
 
 
-def apply_preset_image(image, name, meta):
+def apply_preset_image(image, name, meta, exposure_bracket=False):
   """Applies a preset on the image."""
   preset = PRESETS.get(name)
   if preset is None:
@@ -2303,10 +2294,10 @@ def apply_preset_image(image, name, meta):
       image = masked_denoise_image(image, blur_level, blur_level)
   stretch = preset.get("stretch")
   linear = preset.get("linear", 1.0)
-  if preset.get("lv-offset"):
-    offset = meta.get("_lv_offset_", 0)
-    if offset > 0.1 or offset < -0.1:
-      linear *= 2 ** offset
+  if exposure_bracket:
+    xc = meta.get("_xc_bracket_", 0)
+    if xc > 0.1 or xc < -0.1:
+      linear *= 2 ** xc
   if stretch:
     gain = stretch[0] * linear
     linear = 1
@@ -3719,10 +3710,7 @@ def make_ap_args():
                   help="output image path (dafault=output.jpg)")
   ap.add_argument("--raw-preset", default="raw-std", metavar="name",
                   help="preset for raw development:"
-                  " raw-muted, raw-std (default), raw-vivid, raw-bracket")
-  ap.add_argument("--raw-preset-bracket", default="raw-bracket", metavar="name",
-                  help="preset for raw development:"
-                  " raw-muted, raw-std (default), raw-vivid, raw-bracket")
+                  " raw-muted, raw-std (default), raw-vivid")
   ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
                   help="choose a white balance:"
                   " none (default), auto, auto-scene, daylight, cloudy, shade, tungsten,"
@@ -3965,9 +3953,8 @@ def load_input_images(args):
   for item in images_data:
     image, bits, icc_name, meta = item
     if meta.get("_is_raw_"):
-      preset = args.raw_preset_bracket if is_bracket else args.raw_preset
-      if preset and preset != "none":
-        image = apply_preset_image(image, args.raw_preset_bracket, meta)
+      if args.raw_preset and args.raw_preset != "none":
+        image = apply_preset_image(image, args.raw_preset, meta, is_bracket)
     mod_images_data.append((image, bits, icc_name, meta))
   return mod_images_data
 
@@ -3988,14 +3975,14 @@ def check_bracket(images_data):
     for item, lv in zip(images_data, lvs):
       meta = item[3]
       lv = meta.get("_lv_", mean)
-      meta["_lv_offset_"] = lv - mean
+      meta["_xc_bracket_"] = mean - lv
     return True
   if xcs and max(xcs) - min(xcs) > 0.6:
     mean = np.mean(xcs)
     for item, lv in zip(images_data, xcs):
       meta = item[3]
       xc = meta.get("_xc_", mean)
-      meta["_lv_offset_"] = xc - mean
+      meta["_xc_bracket_"] = xc - mean
     return True
   return False
 
