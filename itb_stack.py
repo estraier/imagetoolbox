@@ -2251,16 +2251,26 @@ PRESETS = {
     "vibrance": 0.3,
   },
   "light": {
-    "linear": 1.1,
-    "gamma": 1.1,
+    "linear": 1.4,
     "slog": 0.5,
-    "sigmoid": (1.0, 0.45),
   },
   "dark": {
     "linear": 0.9,
-    "gamma": 0.9,
     "slog": -0.5,
-    "sigmoid": (1.0, 0.55),
+  },
+  "lift": {
+    "gamma": 1.2,
+    "slog": 0.5,
+  },
+  "drop": {
+    "gamma": 0.85,
+    "slog": -0.5,
+  },
+  "soft": {
+    "sigmoid": (-2.0, 0.45),
+  },
+  "hard": {
+    "sigmoid": (-2.0, 0.45),
   },
   "muted": {
     "sigmoid": (-1.0, 0.45),
@@ -2275,7 +2285,7 @@ PRESETS = {
 }
 
 
-def apply_preset_image(image, name, meta, exposure_bracket=False):
+def apply_preset_image(image, name, meta, exposure_bracket):
   """Applies a preset on the image."""
   preset = PRESETS.get(name)
   if preset is None:
@@ -2412,18 +2422,6 @@ def apply_artistic_filter_image(image, name):
     undo_bytes = byte_image.astype(np.float32)
     float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
     converted = cv2.stylization(byte_image)
-    restored = converted.astype(np.float32) / 255
-    corrected = restored / np.maximum(float_ratio, 1e-6)
-    corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
-    restored = np.clip(corrected, 0, 1)
-    image = np.clip(np.power(restored, gamma), 0, 1)
-  elif name == "oil":
-    gamma = 2.2
-    gamma_image = np.power(image, 1 / gamma)
-    byte_image = (gamma_image * 255).astype(np.uint8)
-    undo_bytes = byte_image.astype(np.float32)
-    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
-    converted = cv2.xphoto.oilPainting(byte_image, size=7, dynRatio=1)
     restored = converted.astype(np.float32) / 255
     corrected = restored / np.maximum(float_ratio, 1e-6)
     corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
@@ -3734,11 +3732,11 @@ def make_ap_args():
   ap.add_argument("--fill-margin", "-fm", action='store_true',
                   help="fill black marin with the color of nearest pixels")
   ap.add_argument("--preset", default="", metavar="name",
-                  help="apply a preset: light, dark, muted, vivid")
+                  help="apply a preset: light, dark, lift, drop, soft, hard, muted, vivid")
   ap.add_argument("--histeq", default="0", metavar="num",
                   help="apply histogram equalization by the clip limit. negative means global")
   ap.add_argument("--art", default="", metavar="name",
-                  help="apply an artistic filter: pencil, stylized, oil, cartoon")
+                  help="apply an artistic filter: pencil, stylized, cartoon")
   ap.add_argument("--optimize-exposure", "-ox", default="0", metavar="num",
                   help="optimize exposure automatically. 1 for perfect exposure")
   ap.add_argument("--linear", type=float, default=1, metavar="num",
@@ -3953,8 +3951,11 @@ def load_input_images(args):
   for item in images_data:
     image, bits, icc_name, meta = item
     if meta.get("_is_raw_"):
-      if args.raw_preset and args.raw_preset != "none":
-        image = apply_preset_image(image, args.raw_preset, meta, is_bracket)
+      presets = re.split(r"[ ,\|:;]+", args.raw_preset)
+      for preset in presets:
+        if not preset or preset == "none": continue
+        logger.debug(f"Applying preset: {preset}")
+        image = apply_preset_image(image, preset, meta, is_bracket)
     mod_images_data.append((image, bits, icc_name, meta))
   return mod_images_data
 
@@ -4176,6 +4177,11 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
 def edit_image(image, meta, args):
   """Edits an image."""
   assert image.dtype == np.float32
+  presets = re.split(r"[ ,\|:;]+", args.preset)
+  for preset in presets:
+    if not preset or preset == "none": continue
+    logger.debug(f"Applying preset: {preset}")
+    image = apply_preset_image(image, preset, meta, False)
   if args.preset and args.preset != "none":
     logger.info(f"Applying preset: {args.preset}")
     image = apply_preset_image(image, args.preset, meta)
