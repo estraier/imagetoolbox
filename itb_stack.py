@@ -2293,19 +2293,22 @@ PRESETS = {
   "wb-tungsten": {"white-balance": "tungsten"},
   "wb-fluorescent": {"white-balance": "fluorescent"},
   "wb-flash": {"white-balance": "flash"},
+  "wb-starlight": {"white-balance": "starlight"},
 }
 
 
 def apply_preset_image(image, name, meta, exposure_bracket):
   """Applies a preset on the image."""
-  x_shift = 0
-  match = re.fullmatch(r"([-a-z0-9]+):([-+]?\d.*)", name)
-  if match:
-    name = match.group(1)
-    x_shift = float(match.group(2))
-  preset = PRESETS.get(name)
-  if preset is None:
-    raise ValueError(f"Unknown preset: {name}")
+  ev_match = re.fullmatch(r"(?i)([-+]\d+(?:\.\d+)?)(ev)?", name)
+  kelvin_match = re.fullmatch(r"(?i)(\d+)k", name)
+  if ev_match:
+    preset = {"linear": 2 ** float(ev_match.group(1))}
+  elif kelvin_match:
+    preset = {"white-balance": kelvin_match.group(1)}
+  else:
+    preset = PRESETS.get(name)
+    if preset is None:
+      raise ValueError(f"Unknown preset: {name}")
   color_denoise_isos = preset.get("auto-denoise")
   if color_denoise_isos:
     iso = meta.get("_sv_")
@@ -2318,20 +2321,21 @@ def apply_preset_image(image, name, meta, exposure_bracket):
       blur_level = 2
     if blur_level > 0:
       image = masked_denoise_image(image, blur_level, blur_level)
+  wb = preset.get("white-balance")
+  if wb:
+    image = adjust_white_balance_image(image, wb)
   stretch = preset.get("stretch")
   linear = preset.get("linear", 1.0)
-  if x_shift != 0:
-    linear *= 2 ** x_shift
   if exposure_bracket:
     xc = meta.get("_xc_bracket_", 0)
     if xc > 0.1 or xc < -0.1:
       linear *= 2 ** xc
   if stretch:
-    gain = stretch[0] * linear
+    target = stretch[0] * linear
     linear = 1
-    image = stretch_contrast_image(image, gain, stretch[1], clip=False)
+    image = stretch_contrast_image(image, target, stretch[1], clip=False)
   if linear != 1:
-    image = apply_linear_image(image, linear, rolloff=False, clip=False)
+    image = apply_linear_image(image, linear, rolloff=None, clip=False)
   image = apply_rolloff(image)
   gamma = preset.get("gamma")
   if gamma:
@@ -3734,7 +3738,7 @@ def make_ap_args():
   ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
                   help="choose a white balance:"
                   " none (default), auto, auto-scene, auto-temp, auto-face,"
-                  " daylight, cloudy, shade, tungsten, fluorescent, flash,"
+                  " daylight, cloudy, shade, tungsten, fluorescent, flash, starlight,"
                   " or a kelvin in K or three weights of RGB like 11,13,12")
   ap.add_argument("--average-exposure", "-ax", action='store_true',
                   help="average input exposure")
