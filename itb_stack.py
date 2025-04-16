@@ -2255,7 +2255,7 @@ PRESETS = {
     "slog": 0.5,
   },
   "dark": {
-    "linear": 0.9,
+    "linear": 0.75,
     "slog": -0.5,
   },
   "lift": {
@@ -2263,30 +2263,35 @@ PRESETS = {
     "slog": 0.5,
   },
   "drop": {
-    "gamma": 0.85,
+    "gamma": 0.84,
     "slog": -0.5,
+  },
+  "hard": {
+    "sigmoid": (2.0, 0.45),
   },
   "soft": {
     "sigmoid": (-2.0, 0.45),
   },
-  "hard": {
-    "sigmoid": (-2.0, 0.45),
-  },
   "muted": {
     "sigmoid": (-1.0, 0.45),
-    "saturation": 0.9,
-    "vibrance": -0.5,
+    "saturation": 0.84,
+    "vibrance": -0.3,
   },
   "vivid": {
     "sigmoid": (1.0, 0.45),
     "saturation": 1.2,
-    "vibrance": 0.2,
+    "vibrance": 0.3,
   },
 }
 
 
 def apply_preset_image(image, name, meta, exposure_bracket):
   """Applies a preset on the image."""
+  x_shift = 0
+  match = re.fullmatch(r"([-a-z0-9]+):([-+]?\d.*)", name)
+  if match:
+    name = match.group(1)
+    x_shift = float(match.group(2))
   preset = PRESETS.get(name)
   if preset is None:
     raise ValueError(f"Unknown preset: {name}")
@@ -2304,6 +2309,8 @@ def apply_preset_image(image, name, meta, exposure_bracket):
       image = masked_denoise_image(image, blur_level, blur_level)
   stretch = preset.get("stretch")
   linear = preset.get("linear", 1.0)
+  if x_shift != 0:
+    linear *= 2 ** x_shift
   if exposure_bracket:
     xc = meta.get("_xc_bracket_", 0)
     if xc > 0.1 or xc < -0.1:
@@ -3951,8 +3958,9 @@ def load_input_images(args):
   for item in images_data:
     image, bits, icc_name, meta = item
     if meta.get("_is_raw_"):
-      presets = re.split(r"[ ,\|:;]+", args.raw_preset)
+      presets = args.raw_preset.split(",")
       for preset in presets:
+        preset = preset.strip()
         if not preset or preset == "none": continue
         logger.debug(f"Applying preset: {preset}")
         image = apply_preset_image(image, preset, meta, is_bracket)
@@ -4177,8 +4185,9 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
 def edit_image(image, meta, args):
   """Edits an image."""
   assert image.dtype == np.float32
-  presets = re.split(r"[ ,\|:;]+", args.preset)
+  presets = args.raw_preset.split(",")
   for preset in presets:
+    preset = preset.strip()
     if not preset or preset == "none": continue
     logger.debug(f"Applying preset: {preset}")
     image = apply_preset_image(image, preset, meta, False)
