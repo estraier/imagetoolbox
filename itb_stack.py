@@ -2283,6 +2283,16 @@ PRESETS = {
     "saturation": 1.2,
     "vibrance": 0.3,
   },
+  "wb-auto": {"white-balance": "auto"},
+  "wb-auto-scene": {"white-balance": "auto-scene"},
+  "wb-auto-temp": {"white-balance": "auto-temp"},
+  "wb-auto-face": {"white-balance": "auto-face"},
+  "wb-daylight": {"white-balance": "daylight"},
+  "wb-cloudy": {"white-balance": "cloudy"},
+  "wb-shade": {"white-balance": "shade"},
+  "wb-tungsten": {"white-balance": "tungsten"},
+  "wb-fluorescent": {"white-balance": "fluorescent"},
+  "wb-flash": {"white-balance": "flash"},
 }
 
 
@@ -3723,8 +3733,9 @@ def make_ap_args():
                   " raw-muted, raw-std (default), raw-vivid")
   ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
                   help="choose a white balance:"
-                  " none (default), auto, auto-scene, daylight, cloudy, shade, tungsten,"
-                  " fluorescent, flash, or a kelvin in K or three weights of RGB like 11,13,12")
+                  " none (default), auto, auto-scene, auto-temp, auto-face,"
+                  " daylight, cloudy, shade, tungsten, fluorescent, flash,"
+                  " or a kelvin in K or three weights of RGB like 11,13,12")
   ap.add_argument("--average-exposure", "-ax", action='store_true',
                   help="average input exposure")
   ap.add_argument("--align", "-a", default="", metavar="name",
@@ -3963,9 +3974,8 @@ def load_input_images(args):
   for item in images_data:
     image, bits, icc_name, meta = item
     if meta.get("_is_raw_"):
-      presets = args.raw_preset.split(",")
+      presets = re.split(r"[ ,\|:;]+", args.raw_preset)
       for preset in presets:
-        preset = preset.strip()
         if not preset or preset == "none": continue
         logger.debug(f"Applying preset: {preset}")
         image = apply_preset_image(image, preset, meta, is_bracket)
@@ -4190,15 +4200,11 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
 def edit_image(image, meta, args):
   """Edits an image."""
   assert image.dtype == np.float32
-  presets = args.preset.split(",")
+  presets = re.split(r"[ ,\|:;]+", args.preset)
   for preset in presets:
-    preset = preset.strip()
     if not preset or preset == "none": continue
     logger.debug(f"Applying preset: {preset}")
     image = apply_preset_image(image, preset, meta, False)
-  if args.preset and args.preset != "none":
-    logger.info(f"Applying preset: {args.preset}")
-    image = apply_preset_image(image, args.preset, meta)
   if args.fill_margin:
     logger.info(f"Filling the margin")
     image = fill_black_margin_image(image)
