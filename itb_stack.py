@@ -510,55 +510,55 @@ def copy_icc_profile(source_path, target_path):
 def srgb_to_linear(image):
   """Converts sRGB gamma into linear RGB."""
   assert image.dtype == np.float32
-  image = np.where(image <= 0.04045,
-                   image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
-  return image.astype(np.float32)
+  return np.where(image <= np.float32(0.04045),
+                  image / np.float32(12.92),
+                  cv2.pow((image + np.float32(0.055)) / np.float32(1.055), np.float32(2.4)))
 
 
 def linear_to_srgb(image):
   """Converts linear RGB into sRGB gamma."""
   assert image.dtype == np.float32
-  image = np.where(image <= 0.0031308,
-                   image * 12.92, 1.055 * cv2.pow(image, 1/2.4) - 0.055)
-  return image.astype(np.float32)
+  return np.where(image <= np.float32(0.0031308),
+                  image * np.float32(12.92),
+                  np.float32(1.055) * cv2.pow(image, np.float32(1.0 / 2.4)) - np.float32(0.055))
 
 
 def prophoto_rgb_to_linear(image):
-  """Converts linear RGB into ProPhoto RGB gamma."""
+  """Converts ProPhoto RGB gamma into linear RGB."""
   assert image.dtype == np.float32
-  image = np.where(image < 0.03125, image / 16.0, np.power(image, 1.8))
-  return image.astype(np.float32)
+  return np.where(image < np.float32(0.03125),
+                  image / np.float32(16.0), np.power(image, np.float32(1.8)))
 
 
 def linear_to_prophoto_rgb(image):
-  """Converts ProPhoto RGB gamma into linear RGB."""
+  """Converts linear RGB into ProPhoto RGB gamma."""
   assert image.dtype == np.float32
-  image = np.where(image < 0.001953, image * 16.0, np.power(image, 1 / 1.8))
-  return image.astype(np.float32)
+  return np.where(image < np.float32(0.001953),
+                  image * np.float32(16.0), np.power(image, np.float32(1.0 / 1.8)))
 
 
 def adobe_rgb_to_linear(image):
   """Converts Adobe RGB gamma into linear RGB."""
   assert image.dtype == np.float32
-  return np.power(np.clip(image, 0.0, 1.0), 2.2).astype(np.float32)
+  return np.power(np.clip(image, np.float32(0.0), np.float32(1.0)), np.float32(2.2))
 
 
 def linear_to_adobe_rgb(image):
   """Converts linear RGB into Adobe RGB gamma."""
   assert image.dtype == np.float32
-  return np.power(np.clip(image, 0.0, 1.0), 1 / 2.2).astype(np.float32)
+  return np.power(np.clip(image, np.float32(0.0), np.float32(1.0)), np.float32(1.0 / 2.2))
 
 
 def bt2020_to_linear(image):
   """Converts Rec BT2020 gamma into linear RGB."""
   assert image.dtype == np.float32
-  return np.power(np.clip(image, 0.0, 1.0), 2.4).astype(np.float32)
+  return np.power(np.clip(image, np.float32(0.0), np.float32(1.0)), np.float32(2.4))
 
 
 def linear_to_bt2020(image):
   """Converts linear RGB into Rec BT2020 gamma."""
   assert image.dtype == np.float32
-  return np.power(np.clip(image, 0.0, 1.0), 1 / 2.4).astype(np.float32)
+  return np.power(np.clip(image, np.float32(0.0), np.float32(1.0)), np.float32(1.0 / 2.4))
 
 
 ICC_PROFILES = {
