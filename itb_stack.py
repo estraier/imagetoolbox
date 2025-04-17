@@ -510,55 +510,49 @@ def copy_icc_profile(source_path, target_path):
 def srgb_to_linear(image):
   """Converts sRGB gamma into linear RGB."""
   assert image.dtype == np.float32
-  return np.where(image <= np.float32(0.04045),
-                  image / np.float32(12.92),
-                  cv2.pow((image + np.float32(0.055)) / np.float32(1.055), np.float32(2.4)))
+  return np.where(image <= 0.04045, image / 12.92, cv2.pow((image + 0.055) / 1.055, 2.4))
 
 
 def linear_to_srgb(image):
   """Converts linear RGB into sRGB gamma."""
   assert image.dtype == np.float32
-  return np.where(image <= np.float32(0.0031308),
-                  image * np.float32(12.92),
-                  np.float32(1.055) * cv2.pow(image, np.float32(1.0 / 2.4)) - np.float32(0.055))
+  return np.where(image <= 0.0031308, image * 12.92, 1.055 * cv2.pow(image, 1.0 / 2.4) - 0.055)
 
 
 def prophoto_rgb_to_linear(image):
   """Converts ProPhoto RGB gamma into linear RGB."""
   assert image.dtype == np.float32
-  return np.where(image < np.float32(0.03125),
-                  image / np.float32(16.0), np.power(image, np.float32(1.8)))
+  return np.where(image < 0.03125, image / 16.0, np.power(image, 1.8))
 
 
 def linear_to_prophoto_rgb(image):
   """Converts linear RGB into ProPhoto RGB gamma."""
   assert image.dtype == np.float32
-  return np.where(image < np.float32(0.001953),
-                  image * np.float32(16.0), np.power(image, np.float32(1.0 / 1.8)))
+  return np.where(image < 0.001953, image * 16.0, np.power(image, 1.0 / 1.8))
 
 
 def adobe_rgb_to_linear(image):
   """Converts Adobe RGB gamma into linear RGB."""
   assert image.dtype == np.float32
-  return np.power(np.clip(image, np.float32(0.0), np.float32(1.0)), np.float32(2.2))
+  return np.power(np.clip(image, 0.0, 1.0), 2.2)
 
 
 def linear_to_adobe_rgb(image):
   """Converts linear RGB into Adobe RGB gamma."""
   assert image.dtype == np.float32
-  return np.power(np.clip(image, np.float32(0.0), np.float32(1.0)), np.float32(1.0 / 2.2))
+  return np.power(np.clip(image, 0.0, 1.0), 1.0 / 2.2)
 
 
 def bt2020_to_linear(image):
   """Converts Rec BT2020 gamma into linear RGB."""
   assert image.dtype == np.float32
-  return np.power(np.clip(image, np.float32(0.0), np.float32(1.0)), np.float32(2.4))
+  return np.power(np.clip(image, 0.0, 1.0), 2.4)
 
 
 def linear_to_bt2020(image):
   """Converts linear RGB into Rec BT2020 gamma."""
   assert image.dtype == np.float32
-  return np.power(np.clip(image, np.float32(0.0), np.float32(1.0)), np.float32(1.0 / 2.4))
+  return np.power(np.clip(image, 0.0, 1.0), 1.0 / 2.4)
 
 
 ICC_PROFILES = {
@@ -627,8 +621,8 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
   upper = np.percentile(gray, upper_percentile) if upper_percentile >= 0 else 1.0
   lower = np.percentile(gray, lower_percentile) if lower_percentile >= 0 else 0.0
   scale = (upper_target - lower_target) / max(upper - lower, 1e-6)
-  bias = np.float32(lower_target - lower * scale)
-  stretched = np.float32(image * scale + bias)
+  bias = lower_target - lower * scale
+  stretched = image * scale + bias
   if clip:
     stretched = np.clip(stretched, 0.0, 1.0)
   return stretched
@@ -675,17 +669,18 @@ def apply_gamma_image(image, gamma):
 def apply_scaled_log_image(image, factor):
   """Adjust image brightness by a scaled log transformation."""
   assert image.dtype == np.float32
+  factor = np.float32(factor)
   if factor > 1e-6:
-    image = np.log1p(image * np.float32(factor)) / np.log1p(np.float32(factor))
+    image = np.log1p(image * factor) / np.log1p(factor)
   elif factor < -1e-6:
     factor = -factor
-    image = (np.expm1(image * np.float32(np.log1p(factor)))) / np.float32(factor)
+    image = (np.expm1(image * np.float32(np.log1p(factor)))) / factor
   return np.clip(image, 0, 1)
 
 
 def naive_sigmoid(x, gain, mid):
   """Computes naive sigmod conversion."""
-  image = np.float32(1.0) / np.float32(1.0 + np.exp((mid - x) * gain))
+  image = 1.0 / np.float32(1.0 + np.exp((mid - x) * gain))
   return image
 
 
