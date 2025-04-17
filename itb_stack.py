@@ -3991,6 +3991,8 @@ def load_input_images(args):
 
 def check_bracket(images_data):
   """Checks if images were taken by exposure bracket."""
+  if len(images_data) < 2:
+    return False
   lvs = []
   xcs = []
   for item in images_data:
@@ -3999,20 +4001,29 @@ def check_bracket(images_data):
     if lv is not None:
       lvs.append(lv)
     xcs.append(meta.get("_xc_", 0.0))
-  is_bracket = False
   if lvs and max(lvs) - min(lvs) > 0.6:
     mean = np.mean(lvs)
     for item, lv in zip(images_data, lvs):
       meta = item[3]
-      lv = meta.get("_lv_", mean)
       meta["_xc_bracket_"] = mean - lv
     return True
   if xcs and max(xcs) - min(xcs) > 0.6:
     mean = np.mean(xcs)
-    for item, lv in zip(images_data, xcs):
+    for item, xc in zip(images_data, xcs):
       meta = item[3]
-      xc = meta.get("_xc_", mean)
       meta["_xc_bracket_"] = xc - mean
+    return True
+  virtual_lvs = []
+  for item in images_data:
+    image = item[0]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    virtual_lv = np.log2(np.mean(gray) + 1e-6)
+    virtual_lvs.append(virtual_lv)
+  if max(virtual_lvs) - min(virtual_lvs) > 0.6:
+    mean = np.mean(virtual_lvs)
+    for item, virtual_lv in zip(images_data, virtual_lvs):
+      meta = item[3]
+      meta["_xc_bracket_"] = virtual_lv - mean
     return True
   return False
 
