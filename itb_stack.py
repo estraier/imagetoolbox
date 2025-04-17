@@ -1091,14 +1091,14 @@ def log_homography_matrix(m):
 def apply_clahe_gray_image(image, clip_limit, gamma=2.2):
   """Applies CLAHE on a gray image."""
   assert image.dtype == np.float32
-  image = np.power(image, 1 / gamma) * 255.0
+  image = np.power(image, 1 / gamma) * 255
   byte_image = image.astype(np.uint8)
   undo_bytes = byte_image.astype(np.float32)
   float_ratio = np.where(byte_image > 0, undo_bytes / (image + 1e-6), image)
   tile_grid_size = (8, 8)
   clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
   new_image = clahe.apply(byte_image).astype(np.float32)
-  new_image = np.power(new_image / 255.0, gamma)
+  new_image = np.power(new_image / 255, gamma)
   corrected = new_image / np.maximum(float_ratio, 1e-6)
   image = np.where((new_image == 0) | (float_ratio < 0.5), new_image, corrected)
   return np.clip(image, 0, 1).astype(np.float32)
@@ -2220,7 +2220,7 @@ def fill_black_margin_image(image):
   black_margin_mask = (mask[1:-1, 1:-1] == 1).astype(np.uint8)
   inpainted = cv2.inpaint(byte_image, black_margin_mask, 5, cv2.INPAINT_TELEA)
   inpainted = cv2.GaussianBlur(inpainted, (5, 5), 0)
-  inpainted = np.clip(inpainted.astype(np.float32) / 255.0, 0, 1)
+  inpainted = np.clip(inpainted.astype(np.float32) / 255, 0, 1)
   restored = np.where(black_margin_mask[:, :, None] == 1, inpainted, padded)
   corrected = restored / np.maximum(float_ratio, 1e-6)
   corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
