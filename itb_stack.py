@@ -1153,17 +1153,15 @@ def log_homography_matrix(m):
 def apply_clahe_gray_image(image, clip_limit, gamma=2.8):
   """Applies CLAHE on a gray image."""
   assert image.dtype == np.float32
-  image = np.power(image, 1 / gamma) * 255
-  byte_image = image.astype(np.uint8)
-  undo_bytes = byte_image.astype(np.float32)
-  float_ratio = np.where(byte_image > 0, undo_bytes / (image + 1e-6), image)
+  image_255 = np.power(image, 1 / gamma) * 255
+  image_bytes = image_255.astype(np.uint8)
+  float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), 1)
   tile_grid_size = (8, 8)
   clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-  new_image = clahe.apply(byte_image).astype(np.float32)
-  new_image = np.power(new_image / 255, gamma)
-  corrected = new_image / np.maximum(float_ratio, 1e-6)
-  image = np.where((new_image == 0) | (float_ratio < 0.5), new_image, corrected)
-  return np.clip(image, 0, 1).astype(np.float32)
+  converted = clahe.apply(image_bytes).astype(np.float32)
+  restored_255 = converted / np.maximum(float_ratio, 0.5)
+  restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 1), restored_255)
+  return np.clip(np.power(restored_255 / 255, gamma), 0, 1)
 
 
 def make_image_for_alignment(image, clahe_clip_limit=0, denoise=0):
