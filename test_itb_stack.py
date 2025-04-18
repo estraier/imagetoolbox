@@ -636,6 +636,19 @@ class TestItbStack(unittest.TestCase):
     main()
     self.assertTrue(os.path.exists(output_path))
 
+  @patch.object(sys, "argv", [])
+  def test_run_command_convert_profile(self):
+    file1_path = os.path.join(self.temp_path, "output1.tif")
+    file2_path = os.path.join(self.temp_path, "output2.jpg")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "--output", file1_path,
+                   "--gamut", "displayp3"]
+    main()
+    self.assertTrue(os.path.exists(file1_path))
+    sys.argv[:] = ["itb_stack.py", file1_path, "--output", file2_path,
+                   "--gamut", "prophoto"]
+    main()
+    self.assertTrue(os.path.exists(file2_path))
+
 
 if __name__ == "__main__":
   if "-v" in sys.argv:

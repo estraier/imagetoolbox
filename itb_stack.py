@@ -42,10 +42,16 @@ PROG_NAME = "itb_stack.py"
 PROG_VERSION = "0.0.2"
 CMD_EXIFTOOL = "exiftool"
 CMD_HUGIN_ALIGN = "align_image_stack"
-EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"]
+EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".jp2"]
 EXTS_IMAGE_HEIF = [".heic", ".heif"]
 EXTS_IMAGE_RAW = [".cr2", ".cr3", ".nef", ".arw", ".dng", ".rw2", ".orf", ".raf", ".pef", ".sr2"]
-EXTS_IMAGE_EXIF = [".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".heic", ".heif"]
+EXTS_EXIFTOOL = [".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".jp2",
+                 ".heic", ".heif"] + EXTS_IMAGE_RAW
+EXTS_EXIFREAD = [".jpg", ".jpeg", ".tiff", ".tif"] + EXTS_IMAGE_RAW
+EXTS_EXIFTOOL_ICC_READ = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".jp2"]
+EXTS_EXIFTOOL_ICC_WRITE = EXTS_EXIFTOOL_ICC_READ[:]
+EXTS_PILLOW_ICC_READ = [".jpg", ".jpeg", ".png", ".tiff", ".tif"]
+EXTS_PILLOW_ICC_WRITE = [".jpg", ".jpeg"]
 EXTS_VIDEO = [".mp4", ".mov"]
 EXTS_NPZ = [".npz"]
 
@@ -172,30 +178,40 @@ def normalize_input_image(image, icc_name):
   return image, bits
 
 
-def check_icc_profile_name(file_path, default="srgb"):
+def check_icc_profile_name(file_path, default="srgb", meta=None):
   """Checks the name of the ICC profile of the image."""
-  try:
-    with Image.open(file_path) as img:
-      icc_bytes = img.info.get("icc_profile", None)
-      if not icc_bytes:
-        return default
-      profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
-      desc = ImageCms.getProfileDescription(profile).strip().lower()
-  except Exception:
-    return default
+  ext = os.path.splitext(file_path)[1].lower()
+  desc = ""
+  profile = None
+  if ext in EXTS_PILLOW_ICC_READ:
+    try:
+      with Image.open(file_path) as img:
+        icc_bytes = img.info.get("icc_profile", None)
+        if icc_bytes:
+          desc = ImageCms.getProfileDescription(profile)
+          profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
+    except Exception:
+      pass
+  if not desc and meta:
+    desc = meta.get("_icc_", "")
+  desc = desc.strip().lower()
   name = default
   if "prophoto" in desc:
     name = "prophoto_rgb"
-    ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+    if profile:
+      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   elif "adobe" in desc:
     name = "adobe_rgb"
-    ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+    if profile:
+      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   elif "display p3" in desc or "displayp3" in desc:
     name = "display_p3"
-    ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+    if profile:
+      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   elif "srgb" in desc:
     name = "srgb"
-    ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+    if profile:
+      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   return name
 
 
@@ -213,22 +229,40 @@ def attach_icc_profile(file_path, icc_name):
       return False
     profile = read_file(icc_path)
     item["icc_data"] = profile
-  try:
-    logger.debug(f"saving ICC profile: {icc_name}")
-    with Image.open(file_path) as img:
-      img.save(file_path, icc_profile=profile)
-  except Exception:
-    return False
-  return True
+  ext = os.path.splitext(file_path)[1].lower()
+  if ext in EXTS_PILLOW_ICC_WRITE:
+    try:
+      logger.info(f"Saving ICC profile: {icc_name}")
+      with Image.open(file_path) as img:
+        img.save(file_path, icc_profile=profile)
+      return True
+    except Exception:
+      pass
+  if has_command(CMD_EXIFTOOL) and ext in EXTS_EXIFTOOL_ICC_WRITE:
+    logger.info(f"Saving ICC profile: {icc_name}")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".icc") as icc_tmp:
+      icc_tmp.write(profile)
+      icc_tmp_path = icc_tmp.name
+    cmd = [CMD_EXIFTOOL, f"-icc_profile<={icc_tmp_path}",
+           "-overwrite_original", file_path]
+    logger.debug(f"running: {' '.join(cmd)}")
+    try:
+      subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      os.remove(icc_tmp_path)
+      return True
+    except Exception:
+      pass
+  return False
 
 
-def load_image(file_path):
+def load_image(file_path, meta=None):
   """Loads an image and returns its linear RGB data as a NumPy array."""
   logger.debug(f"loading image: {file_path}")
   image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
   if image is None:
     raise ValueError(f"Failed to load image: {file_path}")
-  icc_name = check_icc_profile_name(file_path)
+  icc_name = check_icc_profile_name(file_path, "srgb", meta)
   image, bits = normalize_input_image(image, icc_name)
   h, w = image.shape[:2]
   logger.debug(f"input image: h={h}, w={w}, area={h*w}, bits={bits}, icc={icc_name}")
@@ -251,6 +285,11 @@ def save_image(file_path, image, bits, icc_name):
       image = (np.clip(image, 0, 1) * ((1<<16) - 1)).astype(np.uint16)
     else:
       image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
+  elif ext in [".jp2"]:
+    if bits == 32 or bits == 16:
+      image = (np.clip(image, 0, 1) * ((1<<16) - 1)).astype(np.uint16)
+    else:
+      image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
   else:
     raise ValueError(f"Unsupported file format: {ext}")
   success = cv2.imwrite(file_path, image)
@@ -258,12 +297,12 @@ def save_image(file_path, image, bits, icc_name):
     raise ValueError(f"Failed to save image: {file_path}")
 
 
-def load_images_heif(file_path):
+def load_images_heif(file_path, meta=None):
   """Loads images in HEIF/HEIC and returns their linear RGB data as a tuple of a NumPy array."""
   from pillow_heif import open_heif
   logger.debug(f"loading HEIF/HIEC image: {file_path}")
   heif_file = open_heif(file_path)
-  icc_name = check_icc_profile_name(file_path, "display_p3")
+  icc_name = check_icc_profile_name(file_path, "display_p3", meta)
   images = []
   for heif_image in heif_file:
     if heif_image.mode in ["RGB", "RGBA", "L", "LA"]:
@@ -280,7 +319,7 @@ def load_images_heif(file_path):
   return images
 
 
-def load_image_raw(file_path):
+def load_image_raw(file_path, meta=None):
   """Loads a raw image and returns its linear RGB data as a NumPy array."""
   import rawpy
   logger.debug(f"loading raw image: {file_path}")
@@ -436,42 +475,61 @@ def parse_numeric(text):
 def get_metadata(path):
   """Gets Exif data from a image file."""
   meta = {}
-  if has_command(CMD_EXIFTOOL):
-    ext = os.path.splitext(path)[1].lower()
-    if ext in EXTS_IMAGE_EXIF or ext in EXTS_IMAGE_RAW:
-      cmd = ["exiftool", "-s", "-t", "-n", path]
-      logger.debug(f"running: {' '.join(cmd)}")
-      content = subprocess.check_output(
-        cmd, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-      lines = content.decode("utf-8", "ignore").split("\n")
-      for line in lines:
-        fields = line.strip().split("\t", 1)
-        if len(fields) < 2: continue
-        name, value = fields[:2]
-        if name == "ExposureTime":
-          meta["_tv_"] = parse_numeric(str(value))
-        if name == "FNumber":
-          meta["_fv_"] = parse_numeric(str(value))
-        if name == "ISO":
-          meta["_sv_"] = parse_numeric(str(value))
-        if name == "ExposureCompensation":
-          meta["_xc_"] = parse_numeric(str(value))
-  try:
-    ext = os.path.splitext(path)[1].lower()
-    if ext in EXTS_IMAGE_EXIF:
+  ext = os.path.splitext(path)[1].lower()
+  if has_command(CMD_EXIFTOOL) and ext in EXTS_EXIFTOOL:
+    cmd = [CMD_EXIFTOOL, "-s", "-t", "-n", path]
+    logger.debug(f"running: {' '.join(cmd)}")
+    content = subprocess.check_output(
+      cmd, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    lines = content.decode("utf-8", "ignore").split("\n")
+    for line in lines:
+      fields = line.strip().split("\t", 1)
+      if len(fields) < 2: continue
+      name, value = fields[:2]
+      if name == "ExposureTime":
+        meta["_tv_"] = parse_numeric(value)
+      if name == "FNumber":
+        meta["_fv_"] = parse_numeric(value)
+      if name == "ISO":
+        meta["_sv_"] = parse_numeric(value)
+      if name == "ExposureCompensation":
+        meta["_xc_"] = parse_numeric(value)
+      if name == "BitsPerSample":
+        match = re.search("^(\d+)", value)
+        if match:
+          value = match.group(1)
+          meta["_depth_"] = int(value)
+      if name == "BitsPerComponent":
+        meta["_depth_"] = (int(value) & 0x7F) + 1
+      if name == "ProfileDescription":
+        meta["_icc_"] = value
+      if name == "ICCProfileName":
+        meta["_icc_"] = value
+      if name == "DateTimeOriginal":
+        meta["_date_"] = value
+  if not meta and ext in EXTS_EXIFREAD:
+    try:
       with open(path, "rb") as f:
         tags = exifread.process_file(f)
-        for name, value in tags.items():
-          if name == "EXIF ExposureTime":
-            meta["_tv_"] = parse_numeric(str(value))
-          if name == "EXIF FNumber":
-            meta["_fv_"] = parse_numeric(str(value))
-          if name == "EXIF ISOSpeedRatings":
-            meta["_sv_"] = parse_numeric(str(value))
-          if name == "EXIF ExposureCompensation":
-            meta["_xc_"] = parse_numeric(str(value))
-  except:
-    pass
+    except Exception:
+      tags = []
+    for name, value in tags.items():
+      value = str(value)
+      if name == "EXIF ExposureTime":
+        meta["_tv_"] = parse_numeric(value)
+      if name == "EXIF FNumber":
+        meta["_fv_"] = parse_numeric(value)
+      if name == "EXIF ISOSpeedRatings":
+        meta["_sv_"] = parse_numeric(value)
+      if name == "EXIF ExposureCompensation":
+        meta["_xc_"] = parse_numeric(value)
+      if name == "EXIF BitsPerSample":
+        match = re.search("^(\d+)", value)
+        if match:
+          value = match.group(1)
+          meta["_depth_"] = int(value)
+      if name == "EXIF DateTimeOriginal":
+        meta["_date_"] = value
   tv = meta.get("_tv_")
   fv = meta.get("_fv_")
   sv = meta.get("_sv_", 100.0)
@@ -485,26 +543,35 @@ def get_metadata(path):
 
 def copy_metadata(source_path, target_path):
   """Copies EXIF data from source image to target image."""
-  cmd = ["exiftool", "-TagsFromFile", source_path,
-         "-thumbnailimage=", "-f", "-m", "-overwrite_original", target_path]
-  logger.debug(f"running: {' '.join(cmd)}")
-  try:
-    subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-  except:
-    pass
+  source_ext = os.path.splitext(source_path)[1].lower()
+  target_ext = os.path.splitext(target_path)[1].lower()
+  if has_command(CMD_EXIFTOOL) and source_ext in EXTS_EXIFTOOL and target_ext in EXTS_EXIFTOOL:
+    logger.info(f"Copying metadata")
+    cmd = [CMD_EXIFTOOL, "-TagsFromFile", source_path,
+           "-thumbnailimage=", "-f", "-m", "-overwrite_original", target_path]
+    logger.debug(f"running: {' '.join(cmd)}")
+    try:
+      subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+      pass
 
 
 def copy_icc_profile(source_path, target_path):
   """Copies ICC profile from source image to target image."""
-  cmd = ["exiftool", "-TagsFromFile", source_path,
-         "-icc_profile", "-f", "-m", "-overwrite_original", target_path]
-  logger.debug(f"running: {' '.join(cmd)}")
-  try:
-    subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-  except:
-    pass
+  source_ext = os.path.splitext(source_path)[1].lower()
+  target_ext = os.path.splitext(target_path)[1].lower()
+  if (has_command(CMD_EXIFTOOL) and
+      source_ext in EXTS_EXIFTOOL_ICC_READ and target_ext in EXTS_EXIFTOOL_ICC_WRITE):
+    logger.info(f"Copying ICC profile")
+    cmd = [CMD_EXIFTOOL, "-TagsFromFile", source_path,
+           "-icc_profile", "-f", "-m", "-overwrite_original", target_path]
+    logger.debug(f"running: {' '.join(cmd)}")
+    try:
+      subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+      pass
 
 
 def srgb_to_linear(image):
@@ -3693,9 +3760,9 @@ def convert_gamut_image(image, src_name, dst_name):
     dst_icc = read_file(dst_path)
     dst_profile["icc_data"] = dst_icc
   image = src_profile["from_linear"](image)
-  image_bytes = (image * 255).astype(np.uint8)
-  undo_bytes = image_bytes.astype(np.float32)
-  float_ratio = np.where(image_bytes > 0, undo_bytes / (image_bytes + 1e-6), image_bytes)
+  image_255 = image * 255
+  image_bytes = image_255.astype(np.uint8)
+  float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), image_255)
   image_bytes = cv2.cvtColor(image_bytes, cv2.COLOR_BGR2RGB)
   image_pil = Image.fromarray(image_bytes, mode="RGB")
   converted_pil = ImageCms.profileToProfile(
@@ -3706,10 +3773,9 @@ def convert_gamut_image(image, src_name, dst_name):
   )
   converted = np.asarray(converted_pil).astype(np.float32)
   converted = cv2.cvtColor(converted, cv2.COLOR_RGB2BGR)
-  converted = converted / 255
-  corrected = converted / np.maximum(float_ratio, 1e-6)
-  corrected = np.where((converted == 0) | (float_ratio < 0.5), converted, corrected)
-  converted = np.clip(corrected, 0, 1).astype(np.float32)
+  converted /= np.maximum(float_ratio, 0.5)
+  converted = np.where(converted == 0, float_ratio, converted) / 255
+  converted = np.clip(converted, 0, 1)
   converted = dst_profile["to_linear"](converted)
   return converted
 
@@ -3948,7 +4014,7 @@ def load_input_images(args):
         images_data.append((image, bits, "srgb", {}))
     elif ext in EXTS_IMAGE_HEIF:
       meta = get_metadata(input_path)
-      for image, bits, icc_name in load_images_heif(input_path):
+      for image, bits, icc_name in load_images_heif(input_path, meta):
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
@@ -3956,14 +4022,14 @@ def load_input_images(args):
     elif ext in EXTS_IMAGE_RAW:
       meta = get_metadata(input_path)
       meta["_is_raw_"] = True
-      image, bits, icc_name = load_image_raw(input_path)
+      image, bits, icc_name = load_image_raw(input_path, meta)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
       images_data.append((image, bits, icc_name, meta))
     elif ext in EXTS_IMAGE:
       meta = get_metadata(input_path)
-      image, bits, icc_name = load_image(input_path)
+      image, bits, icc_name = load_image(input_path, meta)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
@@ -4047,9 +4113,7 @@ def postprocess_video(args, images, meta_list, icc_names):
     edited_images.append(image)
   logger.info(f"Saving the output file as a video")
   save_video(args.output, edited_images, args.output_video_fps)
-  if has_command(CMD_EXIFTOOL):
-    logger.info(f"Copying metadata")
-    copy_metadata(args.inputs[0], args.output)
+  copy_metadata(args.inputs[0], args.output)
 
 
 def crop_to_match(image, target_size):
@@ -4200,13 +4264,9 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
   logger.info(f"Saving the output file as an image")
   ext = os.path.splitext(args.output)[1].lower()
   save_image(args.output, merged_image, bits, icc_name)
-  if has_command(CMD_EXIFTOOL):
-    logger.info(f"Copying metadata")
-    if ext in EXTS_IMAGE_EXIF:
-      copy_metadata(args.inputs[0], args.output)
-    if ext in EXTS_IMAGE_EXIF:
-      if not attach_icc_profile(args.output, icc_name):
-        copy_icc_profile(args.inputs[0], args.output)
+  copy_metadata(args.inputs[0], args.output)
+  if not attach_icc_profile(args.output, icc_name):
+    copy_icc_profile(args.inputs[0], args.output)
 
 
 def edit_image(image, meta, args):
