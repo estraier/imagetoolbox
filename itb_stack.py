@@ -1150,7 +1150,7 @@ def log_homography_matrix(m):
                f"scale=({scale_x:.2f}, {scale_y:.2f}), angle={angle:.2f}°")
 
 
-def apply_clahe_gray_image(image, clip_limit, gamma=2.2):
+def apply_clahe_gray_image(image, clip_limit, gamma=2.8):
   """Applies CLAHE on a gray image."""
   assert image.dtype == np.float32
   image = np.power(image, 1 / gamma) * 255
@@ -2419,7 +2419,7 @@ def apply_preset_image(image, name, meta, exposure_bracket):
   return np.clip(image, 0, 1)
 
 
-def apply_global_histeq_image(image, gamma=2.2, white_level=255, restore_color=True):
+def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
   """Applies global histogram equalization contrast enhancement."""
   assert image.dtype == np.float32
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -2427,16 +2427,14 @@ def apply_global_histeq_image(image, gamma=2.2, white_level=255, restore_color=T
   l = np.clip(l, 0, 100)
   a = np.clip(a, -128, 127)
   b = np.clip(b, -128, 127)
-  l = np.power(l / 100, 1 / gamma) * white_level
-  byte_l = (l).astype(np.uint8)
-  undo_bytes = byte_l.astype(np.float32)
-  float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
-  new_l = cv2.equalizeHist(byte_l).astype(np.float32)
-  new_l = np.power(new_l / white_level, gamma) * 100
-  corrected = new_l / np.maximum(float_ratio, 1e-6)
-  corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
-  new_l = np.clip(corrected, 0, 100)
-  lab = cv2.merge((new_l, a, b))
+  l_255 = np.power(l / 100, 1 / gamma) * 255
+  l_bytes = l_255.astype(np.uint8)
+  float_ratio = np.where(l_bytes > 0, l_bytes / np.maximum(l_255, 1e-6), 1)
+  converted = cv2.equalizeHist(l_bytes).astype(np.float32)
+  restored_255 = converted / np.maximum(float_ratio, 0.5)
+  restored_255 = np.where(converted == 0, np.minimum(l_255 * 0.9, 1), restored_255)
+  restored = np.clip(np.power(restored_255 / 255, gamma) * 100, 0, 100)
+  lab = cv2.merge((restored, a, b))
   enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
   if restore_color:
     old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -2451,7 +2449,7 @@ def apply_global_histeq_image(image, gamma=2.2, white_level=255, restore_color=T
   return np.clip(enhanced_image, 0, 1)
 
 
-def apply_clahe_image(image, clip_limit, gamma=2.2, white_level=245, restore_color=True):
+def apply_clahe_image(image, clip_limit, gamma=2.8, restore_color=True):
   """Applies CLAHE contrast enhancement."""
   assert image.dtype == np.float32
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -2459,18 +2457,16 @@ def apply_clahe_image(image, clip_limit, gamma=2.2, white_level=245, restore_col
   l = np.clip(l, 0, 100)
   a = np.clip(a, -128, 127)
   b = np.clip(b, -128, 127)
-  l = np.power(l / 100, 1 / gamma) * white_level
-  byte_l = (l).astype(np.uint8)
-  undo_bytes = byte_l.astype(np.float32)
-  float_ratio = np.where(byte_l > 0, undo_bytes / (l + 1e-6), l)
+  l_255 = np.power(l / 100, 1 / gamma) * 255
+  l_bytes = l_255.astype(np.uint8)
+  float_ratio = np.where(l_bytes > 0, l_bytes / np.maximum(l_255, 1e-6), 1)
   tile_grid_size = (8, 8)
   clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-  new_l = clahe.apply(byte_l).astype(np.float32)
-  new_l = np.power(new_l / white_level, gamma) * 100
-  corrected = new_l / np.maximum(float_ratio, 1e-6)
-  corrected = np.where((new_l == 0) | (float_ratio < 0.5), new_l, corrected)
-  new_l = np.clip(corrected, 0, 100)
-  lab = cv2.merge((new_l, a, b))
+  converted = clahe.apply(l_bytes).astype(np.float32)
+  restored_255 = converted / np.maximum(float_ratio, 0.5)
+  restored_255 = np.where(converted == 0, np.minimum(l_255 * 0.9, 1), restored_255)
+  restored = np.clip(np.power(restored_255 / 255, gamma) * 100, 0, 100)
+  lab = cv2.merge((restored, a, b))
   enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
   if restore_color:
     old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -3760,10 +3756,10 @@ def convert_gamut_image(image, src_name, dst_name):
     dst_icc = read_file(dst_path)
     dst_profile["icc_data"] = dst_icc
   image = src_profile["from_linear"](image)
+  image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
   image_255 = image * 255
   image_bytes = image_255.astype(np.uint8)
-  float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), image_255)
-  image_bytes = cv2.cvtColor(image_bytes, cv2.COLOR_BGR2RGB)
+  float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), 1)
   image_pil = Image.fromarray(image_bytes, mode="RGB")
   converted_pil = ImageCms.profileToProfile(
     image_pil,
@@ -3772,10 +3768,10 @@ def convert_gamut_image(image, src_name, dst_name):
     outputMode="RGB"
   )
   converted = np.asarray(converted_pil).astype(np.float32)
-  converted = cv2.cvtColor(converted, cv2.COLOR_RGB2BGR)
-  restored = converted / np.maximum(float_ratio, 0.5)
-  restored = np.where(restored == 0, float_ratio, restored) / 255
-  restored = np.clip(restored, 0, 1)
+  restored_255 = converted / np.maximum(float_ratio, 0.5)
+  restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 1), restored_255)
+  restored = np.clip(restored_255 / 255, 0, 1)
+  restored = cv2.cvtColor(restored, cv2.COLOR_RGB2BGR)
   restored = dst_profile["to_linear"](restored)
   return restored
 
