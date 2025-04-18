@@ -3773,11 +3773,11 @@ def convert_gamut_image(image, src_name, dst_name):
   )
   converted = np.asarray(converted_pil).astype(np.float32)
   converted = cv2.cvtColor(converted, cv2.COLOR_RGB2BGR)
-  converted /= np.maximum(float_ratio, 0.5)
-  converted = np.where(converted == 0, float_ratio, converted) / 255
-  converted = np.clip(converted, 0, 1)
-  converted = dst_profile["to_linear"](converted)
-  return converted
+  restored = converted / np.maximum(float_ratio, 0.5)
+  restored = np.where(restored == 0, float_ratio, restored) / 255
+  restored = np.clip(restored, 0, 1)
+  restored = dst_profile["to_linear"](restored)
+  return restored
 
 
 def set_logging_level(level):
