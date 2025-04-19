@@ -164,6 +164,12 @@ especially useful for portraiture.
   $ itb_stack.py input*.jpg -o output.jpg --portrait auto:decay=0.2  # adjust strength
   $ itb_stack.py input*.jpg -o output.jpg --portrait 4:repeat=2      # smoother bokeh
 
+Sharpness enhancement is typically applied at the final stage of image processing.  While
+--texture enhances medium-frequency details such as skin or fabric, --unsharp sharpens
+high-frequency edges.  The following settings work well for most images.
+
+  $ itb_stack.py input*.jpg -o output.jpg --texture 2 --unsharp 1
+
 If "exiftool" command is available on your system, EXIF metadata and ICC profile of the first
 input image are preserved in the merged image.
 
@@ -231,7 +237,7 @@ The workflow of this command is the following.
        --saturation to adjust saturation by a multiplicative function
        --vibrance to adjust saturation by a scaled logarithmic function
        --optimize-exposure to adjust exposure automatically
-       --denoise, --blur, --unsharp, --portrait to adjust noise/bokeh/sharpness
+       --denoise, --blur, --portrait, --texture, --unsharp, to adjust noise/bokeh/sharpness
        --trim, --pers, --scale to change geometry
        --vignetting, --caption to apply finishing touches
   8: The merged image is saved as a file.
