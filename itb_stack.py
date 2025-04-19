@@ -715,14 +715,16 @@ def apply_rolloff(image, asymptotic=0.5, saving_limit=4, percentile=99.8, clip=T
   return image
 
 
-def adjust_black_white_points_image(
+def adjust_level_image(
     image, black=None, white=None, black_rolloff=None, white_rolloff=None):
   """Sets the black and white points."""
   assert image.dtype == np.float32
   if black is None:
     black = np.percentile(image, 0.2)
+    black = black * 0.9
   if white is None:
     white = np.percentile(image, 99.8)
+    white += (1 - white) * 0.1
   if black_rolloff is None:
     black_rolloff = 0.15
   if white_rolloff is None:
@@ -2465,7 +2467,9 @@ def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
     _, old_s, old_v = cv2.split(old_hsv)
     new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
     new_h, new_s, new_v = cv2.split(new_hsv)
-    risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
+    highlight_risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
+    shadow_risk = np.clip((old_v - new_v) / (old_v + 1e-6), 0.1, 0.9)
+    risk = np.maximum(highlight_risk, shadow_risk)
     merged_s = old_s * (1 - risk) + new_s * risk
     final_hsv = cv2.merge((new_h, merged_s, new_v))
     enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
@@ -2497,6 +2501,9 @@ def apply_clahe_image(image, clip_limit, gamma=2.8, restore_color=True):
     new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
     new_h, new_s, new_v = cv2.split(new_hsv)
     risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
+    highlight_risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
+    shadow_risk = np.clip((old_v - new_v) / (old_v + 1e-6), 0.1, 0.9)
+    risk = np.maximum(highlight_risk, shadow_risk)
     merged_s = old_s * (1 - risk) + new_s * risk
     final_hsv = cv2.merge((new_h, merged_s, new_v))
     enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
@@ -4349,7 +4356,7 @@ def edit_image(image, meta, args):
   level_params = parse_level_expression(args.level)
   if level_params:
     logger.info(f"Adjust the black and white points")
-    image = adjust_black_white_points_image(image, *level_params)
+    image = adjust_level_image(image, *level_params)
   if args.linear != 1.0 and args.linear > 0:
     logger.info(f"Adjust brightness by a linear multiplier")
     image = apply_linear_image(image, args.linear)
