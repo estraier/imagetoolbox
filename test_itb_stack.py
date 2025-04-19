@@ -32,7 +32,8 @@ from itb_stack import (
   fill_black_margin_image, apply_preset_image,
   apply_global_histeq_image, apply_clahe_image, apply_artistic_filter_image,
   stretch_contrast_image,
-  apply_linear_image, apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
+  adjust_black_white_points_image, apply_linear_image,
+  apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   saturate_image_linear, saturate_image_scaled_log,
   optimize_exposure_image, convert_grayscale_image,
   bilateral_denoise_image, masked_denoise_image,
@@ -404,6 +405,21 @@ class TestItbStack(unittest.TestCase):
     processed = stretch_contrast_image(image, 1.0, -1, 0, 1)
     self.assertEqual(processed.shape, image.shape)
 
+  def test_adjust_black_white_points_image_auto(self):
+    image = generate_test_image()
+    processed = adjust_black_white_points_image(image)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_adjust_black_white_points_image_narrow(self):
+    image = generate_test_image()
+    processed = adjust_black_white_points_image(image, 0.2, 0.8, 0.3, 0.7)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_adjust_black_white_points_image_wide(self):
+    image = generate_test_image()
+    processed = adjust_black_white_points_image(image, -0.2, 1.1)
+    self.assertEqual(processed.shape, image.shape)
+
   def test_apply_linear_image_lighten(self):
     image = generate_test_image()
     processed = apply_linear_image(image, 2.2)
@@ -628,7 +644,7 @@ class TestItbStack(unittest.TestCase):
   def test_run_command_edit_brightness(self):
     output_path = os.path.join(self.temp_path, "output.tif")
     sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
-                   "--linear", "0.8", "--gamma", "1.1", "--slog", "0.5",
+                   "--level", "auto", "--linear", "0.8", "--gamma", "1.1", "--slog", "0.5",
                    "--sigmoid", "0.5:mid=0.3"]
     main()
     self.assertTrue(os.path.exists(output_path))

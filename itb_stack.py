@@ -695,12 +695,14 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
   return stretched
 
 
-def apply_rolloff(image, asymptotic=0.5, saving_limit=4, percentile=99.8):
+def apply_rolloff(image, asymptotic=0.5, saving_limit=4, percentile=99.8, clip=True):
   """Applies highlight rolloff."""
   assert image.dtype == np.float32
   max_val = np.percentile(image, percentile)
   if max_val <= 1.0:
-    return np.clip(image, 0.0, 1.0)
+    if clip:
+      image = np.clip(image, 0.0, 1.0)
+    return image
   if max_val > saving_limit:
     asymptotic = asymptotic ** (saving_limit / max_val)
   inflection = asymptotic + (1.0 - asymptotic) / max_val
@@ -708,6 +710,32 @@ def apply_rolloff(image, asymptotic=0.5, saving_limit=4, percentile=99.8):
   mask = image > inflection
   scale = (1.0 - inflection) / (max_val - inflection + 1e-6)
   image[mask] = inflection + (image[mask] - inflection) * scale
+  if clip:
+    image = np.clip(image, 0.0, 1.0)
+  return image
+
+
+def adjust_black_white_points_image(
+    image, black=None, white=None, black_rolloff=None, white_rolloff=None):
+  """Sets the black and white points."""
+  assert image.dtype == np.float32
+  if black is None:
+    black = np.percentile(image, 0.2)
+  if white is None:
+    white = np.percentile(image, 99.8)
+  if black_rolloff is None:
+    black_rolloff = 0.15
+  if white_rolloff is None:
+    white_rolloff = 0.85
+  if black >= white:
+    raise ValueError(f"Invalid range: {black,white}")
+  image = (image - black) / (white - black + 1e-6)
+  if black > 0.0 and black_rolloff > 0:
+    inverted = 1.0 - image
+    rolled = apply_rolloff(inverted, asymptotic=1 - black_rolloff, clip=False)
+    image = 1.0 - rolled
+  if white < 1.0 and white_rolloff < 1.0:
+    image = apply_rolloff(image, asymptotic=white_rolloff, clip=False)
   return np.clip(image, 0.0, 1.0)
 
 
@@ -3678,6 +3706,30 @@ def parse_trim_expression(expr):
   return t, r, b, l
 
 
+def parse_level_expression(expr):
+  """Parses level correction expression and returns the black/white points and rolloffs."""
+  expr = expr.strip()
+  if not expr:
+    return None
+  parse_value = lambda v: None if v == "auto" else float(v)
+  values = re.split(r'[ ,\|:;]+', expr.strip())
+  values = [parse_value(v) for v in values]
+  b = None
+  w = None
+  br = None
+  wr = None
+  if len(values) == 1:
+    b = None
+    w = values[0]
+  elif len(values) == 2:
+    b, w = values
+  elif len(values) == 4:
+    b, w, br, wr = values
+  else:
+    raise ValueError("level expression must contain 1 to 2 values")
+  return b, w, br, wr
+
+
 def parse_pers_expression(expr):
   """Parses perspective correction expression and returns TL,TR,BR,TL ratios."""
   expr = expr.strip()
@@ -3774,10 +3826,12 @@ def set_logging_level(level):
 def make_ap_args():
   """Makes arguments of the argument parser."""
   description = "Stack and combine images."
-  epilog = f"{PROG_NAME} version {PROG_VERSION}. Powered by OpenCV2."
+  version_msg = (f"{PROG_NAME} version {PROG_VERSION}."
+            f" Powered by OpenCV2 {cv2.__version__} and NumPy {np.__version__}.")
   ap = argparse.ArgumentParser(
-    prog=PROG_NAME, description=description, epilog=epilog,
+    prog=PROG_NAME, description=description, epilog=version_msg,
     formatter_class=argparse.RawDescriptionHelpFormatter, allow_abbrev=False)
+  ap.add_argument("--version", action='version', version=version_msg)
   ap.add_argument("inputs", nargs='+', help="input image paths")
   ap.add_argument("--output", "-o", default="output.jpg", metavar="path",
                   help="output image path (dafault=output.jpg)")
@@ -3815,6 +3869,8 @@ def make_ap_args():
                   help="apply an artistic filter: pencil, stylized, cartoon")
   ap.add_argument("--optimize-exposure", "-ox", default="0", metavar="num",
                   help="optimize exposure automatically. 1 for perfect exposure")
+  ap.add_argument("--level", default="", metavar="numlist",
+                  help="set the black point and the white point. eg. 0.03,0.92")
   ap.add_argument("--linear", type=float, default=1, metavar="num",
                   help="linear brightness adjustment."
                   " less than 1.0 to darken, less than 1.0 to lighten")
@@ -4290,6 +4346,10 @@ def edit_image(image, meta, args):
   if optex_num > 0:
     logger.info(f"Optimizing exposure automatically")
     image = optimize_exposure_image(image, optex_num)
+  level_params = parse_level_expression(args.level)
+  if level_params:
+    logger.info(f"Adjust the black and white points")
+    image = adjust_black_white_points_image(image, *level_params)
   if args.linear != 1.0 and args.linear > 0:
     logger.info(f"Adjust brightness by a linear multiplier")
     image = apply_linear_image(image, args.linear)

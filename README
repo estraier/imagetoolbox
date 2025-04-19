@@ -89,11 +89,14 @@ If this tool can optimize exposure automatically by maximizing entropy of lumina
   $ itb_stack.py input*.jpg -o output.jpg -ox
 
 You can adjust brightness and contrast of the merged image manually.  If an option parameter
-starts with "-", use "=" as the separator.  To adjust exposure, using --linear is useful because
-it simulates physical exposure adjustment while it avoids highlight clipping by soft rolling off.
-To adjust overall atomosphere, using --slog and --sigmoid is useful because they don't change the
-white point and the black point.
+starts with "-", use "=" as the separator.  To stretch contrast by setting the black point and the
+white point, use --level.  To adjust exposure manually, use --linear.  Both simulates physical
+exposure adjustment while they avoid highlight clipping by soft rolling off.  To adjust overall
+atomosphere, using --slog and --sigmoid is useful because they don't alter the white point or
+the black point.
 
+  $ itb_stack.py input*.jpg -o output.jpg --level auto
+  $ itb_stack.py input*.jpg -o output.jpg --level 0.02,0.87
   $ itb_stack.py input*.jpg -o output.jpg --linear 1.2
   $ itb_stack.py input*.jpg -o output.jpg --slog 1.3 --sigmoid 2.4
   $ itb_stack.py input*.jpg -o output.jpg --slog=-0.5 --sigmoid=-3.2
