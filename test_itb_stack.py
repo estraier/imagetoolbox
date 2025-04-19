@@ -37,7 +37,7 @@ from itb_stack import (
   optimize_exposure_image, convert_grayscale_image,
   bilateral_denoise_image, masked_denoise_image,
   blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
-  blur_image_pyramid, unsharp_image_gaussian,
+  blur_image_pyramid, enhance_texture_image, unsharp_image_gaussian,
   perspective_correct_image, trim_image, scale_image, apply_vignetting_image, write_caption,
 )
 
@@ -390,7 +390,7 @@ class TestItbStack(unittest.TestCase):
 
   def test_artistic_filter(self):
     image = generate_test_image()
-    for name in ["pencil", "stylized", "cartoon"]:
+    for name in ["pencil", "stylized"]:
       processed = apply_artistic_filter_image(image, name)
       self.assertEqual(processed.shape, image.shape)
 
@@ -500,6 +500,11 @@ class TestItbStack(unittest.TestCase):
   def test_blur_image_pyramid(self):
     image = generate_test_image()
     processed = blur_image_pyramid(image, 3)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_enhance_texture_image(self):
+    image = generate_test_image()
+    processed = enhance_texture_image(image, 3)
     self.assertEqual(processed.shape, image.shape)
 
   def test_unsharp_image_gaussian(self):
@@ -633,6 +638,24 @@ class TestItbStack(unittest.TestCase):
     output_path = os.path.join(self.temp_path, "output.tif")
     sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
                    "--saturation", "0.5", "--vibrance", "1"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_edit_blur_sharp(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--denoise", "3", "--blur", "3", "--portrait", "auto",
+                   "--texture", "3", "--unsharp", "3"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_edit_scaling(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--trim", "10,10,10,10", "--pers", "10,10,10,90,0,100,100,0",
+                   "--scale", "500", "--vignetting", "0.2"]
     main()
     self.assertTrue(os.path.exists(output_path))
 

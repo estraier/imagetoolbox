@@ -2480,45 +2480,26 @@ def apply_artistic_filter_image(image, name):
   assert image.dtype == np.float32
   name = name.strip().lower()
   if name == "pencil":
-    gamma = 2.2
+    gamma = 2.4
     gamma_image = np.power(image, 1 / gamma)
-    byte_image = (gamma_image * 255).astype(np.uint8)
-    undo_bytes = byte_image.astype(np.float32)
-    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
-    _, converted = cv2.pencilSketch(byte_image)
-    restored = converted.astype(np.float32) / 255
-    corrected = restored / np.maximum(float_ratio, 1e-6)
-    corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
-    restored = np.clip(corrected, 0, 1)
+    image_255 = gamma_image * 255
+    image_bytes = image_255.astype(np.uint8)
+    float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), 1)
+    _, converted = cv2.pencilSketch(image_bytes)
+    restored_255 = converted.astype(np.float32) / np.maximum(float_ratio, 0.5)
+    restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 0.9), restored_255)
+    restored = np.clip(restored_255 / 255, 0, 1)
     image = np.clip(np.power(restored, gamma), 0, 1)
   elif name == "stylized":
-    gamma = 2.2
+    gamma = 2.4
     gamma_image = np.power(image, 1 / gamma)
-    byte_image = (gamma_image * 255).astype(np.uint8)
-    undo_bytes = byte_image.astype(np.float32)
-    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
-    converted = cv2.stylization(byte_image)
-    restored = converted.astype(np.float32) / 255
-    corrected = restored / np.maximum(float_ratio, 1e-6)
-    corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
-    restored = np.clip(corrected, 0, 1)
-    image = np.clip(np.power(restored, gamma), 0, 1)
-  elif name == "cartoon":
-    gamma = 1.2
-    gamma_image = np.power(image, 1 / gamma)
-    byte_image = (gamma_image * 255).astype(np.uint8)
-    undo_bytes = byte_image.astype(np.float32)
-    float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), gamma_image)
-    gray = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
-    gray = np.clip(gray, 0, 1)
-    gray = cv2.medianBlur(gray, 7)
-    edges = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 9, 10)
-    color = cv2.bilateralFilter(byte_image, 9, 250, 250)
-    converted = cv2.bitwise_and(color, color, mask=edges).astype(np.float32)
-    restored = converted.astype(np.float32) / 255
-    corrected = restored / np.maximum(float_ratio, 1e-6)
-    corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
-    restored = np.clip(corrected, 0, 1)
+    image_255 = gamma_image * 255
+    image_bytes = image_255.astype(np.uint8)
+    float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), 1)
+    converted = cv2.stylization(image_bytes)
+    restored_255 = converted.astype(np.float32) / np.maximum(float_ratio, 0.5)
+    restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 0.9), restored_255)
+    restored = np.clip(restored_255 / 255, 0, 1)
     image = np.clip(np.power(restored, gamma), 0, 1)
   else:
     raise ValueError(f"Unknown artistic filter: {name}")
@@ -3422,6 +3403,21 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
   return np.clip(restored, 0, 1)
 
 
+def enhance_texture_image(image, radius, gamma=2.8):
+  """Enhances texture by detailed enhancing."""
+  gamma_image = np.power(image, 1 / gamma)
+  image_255 = gamma_image * 255
+  image_bytes = image_255.astype(np.uint8)
+  float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), 1)
+  sigma_s = radius / 2
+  sigma_r = max(0.05, 0.3 / (sigma_s + 1))
+  converted = cv2.detailEnhance(image_bytes, sigma_s=sigma_s, sigma_r=sigma_r)
+  restored_255 = converted.astype(np.float32) / np.maximum(float_ratio, 0.5)
+  restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 0.9), restored_255)
+  restored = np.power(restored_255 / 255, gamma)
+  return np.clip(restored, 0, 1)
+
+
 def unsharp_image_gaussian(image, radius):
   """Applies unsharp mask by Gaussian blur."""
   assert image.dtype == np.float32
@@ -3847,6 +3843,8 @@ def make_ap_args():
                   help="apply Gaussian blur by the pixel radius. negative uses pyramid blur")
   ap.add_argument("--portrait", default="0", metavar="num",
                   help="apply portrait blur by the pyramid level")
+  ap.add_argument("--texture", type=float, default=0, metavar="num",
+                  help="enhance texture by the pixel radius.")
   ap.add_argument("--unsharp", type=int, default=0, metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
   ap.add_argument("--trim", default="", metavar="numlist",
@@ -4352,6 +4350,9 @@ def edit_image(image, meta, args):
     copy_param_to_kwargs(portrait_params, kwargs, "finish_edge", float)
     logger.info(f"Applying portrait blur by {portrait_levels} levels")
     image = blur_image_portrait(image, portrait_levels, **kwargs)
+  if args.texture > 0:
+    logger.info(f"Enhancing texture")
+    image = enhance_texture_image(image, args.texture)
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
     image = unsharp_image_gaussian(image, args.unsharp)
