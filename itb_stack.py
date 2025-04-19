@@ -2260,10 +2260,10 @@ def fill_black_margin_image(image):
   padding = 10
   padded = cv2.copyMakeBorder(image, padding, padding, padding, padding,
                               borderType=cv2.BORDER_CONSTANT, value=(0, 0, 0))
-  byte_image = (padded * 255).astype(np.uint8)
-  undo_bytes = byte_image.astype(np.float32)
-  float_ratio = np.where(byte_image > 0, undo_bytes / (byte_image + 1e-6), padded)
-  gray = cv2.cvtColor(byte_image, cv2.COLOR_BGR2GRAY)
+  image_255 = padded * 255
+  image_bytes = image_255.astype(np.uint8)
+  float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), 1)
+  gray = cv2.cvtColor(image_bytes, cv2.COLOR_BGR2GRAY)
   gray = np.clip(gray, 0, 1)
   h, w = gray.shape
   mask = np.zeros((h + 2, w + 2), np.uint8)
@@ -2278,13 +2278,11 @@ def fill_black_margin_image(image):
     if gray[y, w - 1] == 0:
       cv2.floodFill(gray, mask, (w - 1, y), 255, flags=4)
   black_margin_mask = (mask[1:-1, 1:-1] == 1).astype(np.uint8)
-  inpainted = cv2.inpaint(byte_image, black_margin_mask, 5, cv2.INPAINT_TELEA)
-  inpainted = cv2.GaussianBlur(inpainted, (5, 5), 0)
-  inpainted = np.clip(inpainted.astype(np.float32) / 255, 0, 1)
-  restored = np.where(black_margin_mask[:, :, None] == 1, inpainted, padded)
-  corrected = restored / np.maximum(float_ratio, 1e-6)
-  corrected = np.where((restored == 0) | (float_ratio < 0.5), restored, corrected)
-  restored = np.clip(corrected, 0, 1)
+  converted = cv2.inpaint(image_bytes, black_margin_mask, 5, cv2.INPAINT_TELEA)
+  converted = cv2.GaussianBlur(converted, (5, 5), 0)
+  restored_255 = converted / np.maximum(float_ratio, 0.5)
+  restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 0.9), restored_255)
+  restored = np.clip(restored_255 / 255, 0, 1)
   return restored[padding:-padding, padding:-padding]
 
 
