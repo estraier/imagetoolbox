@@ -3856,6 +3856,10 @@ def make_ap_args():
   ap.add_argument("--raw-preset", default="raw-std", metavar="name",
                   help="preset for raw development:"
                   " raw-muted, raw-std (default), raw-vivid")
+  ap.add_argument("--input-trim", default="", metavar="numlist",
+                  help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
+  ap.add_argument("--input-scale", default="", metavar="numlist",
+                  help="scale change: WIDTH,HEIGHT in pixels eg. 1920,1080")
   ap.add_argument("--white-balance", "-wb", default="", metavar="expr",
                   help="choose a white balance:"
                   " none (default), auto, auto-scene, auto-temp, auto-face,"
@@ -4037,6 +4041,7 @@ def load_input_images(args):
     mem_allowance = limit_mem_size - total_mem_size
     match = re.fullmatch(r"\[([a-z].*)+\]", input_path)
     if match:
+      meta = {}
       ctl_params = parse_name_opts_expression(match.group(1))
       name = ctl_params["name"]
       if name == "blank":
@@ -4056,27 +4061,33 @@ def load_input_images(args):
         icc_name = 'srgb'
       else:
         raise ValueError(f"Unsupported image generation: {name}")
+      image = input_preprocess_image(image, meta, args)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
       images_data.append((image, bits, icc_name, {}))
     elif ext in EXTS_NPZ:
+      meta = {}
       npz_image_data = load_npz(input_path, mem_allowance)
       for image, bits in npz_image_data:
+        image = input_preprocess_image(image, meta, args)
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-        images_data.append((image, bits, "srgb", {}))
+        images_data.append((image, bits, "srgb", meta))
     elif ext in EXTS_VIDEO:
+      meta = {}
       video_image_data = load_video(input_path, mem_allowance, args.input_video_fps)
       for image, bits in video_image_data:
+        image = input_preprocess_image(image, meta, args)
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
-        images_data.append((image, bits, "srgb", {}))
+        images_data.append((image, bits, "srgb", meta))
     elif ext in EXTS_IMAGE_HEIF:
       meta = get_metadata(input_path)
       for image, bits, icc_name in load_images_heif(input_path, meta):
+        image = input_preprocess_image(image, meta, args)
         total_mem_size += estimate_image_memory_size(image)
         if total_mem_size > limit_mem_size:
           raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
@@ -4085,6 +4096,7 @@ def load_input_images(args):
       meta = get_metadata(input_path)
       meta["_is_raw_"] = True
       image, bits, icc_name = load_image_raw(input_path, meta)
+      image = input_preprocess_image(image, meta, args)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
@@ -4092,6 +4104,7 @@ def load_input_images(args):
     elif ext in EXTS_IMAGE:
       meta = get_metadata(input_path)
       image, bits, icc_name = load_image(input_path, meta)
+      image = input_preprocess_image(image, meta, args)
       total_mem_size += estimate_image_memory_size(image)
       if total_mem_size > limit_mem_size:
         raise SystemError(f"Exceeded memory limit: {total_mem_size} vs {limit_mem_size}")
@@ -4329,6 +4342,22 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
   copy_metadata(args.inputs[0], args.output, icc_name)
   if not attach_icc_profile(args.output, icc_name):
     copy_icc_profile(args.inputs[0], args.output)
+
+
+def input_preprocess_image(image, meta, args):
+  """Edits an input image."""
+  assert image.dtype == np.float32
+  trim_params = parse_trim_expression(args.input_trim)
+  if trim_params:
+    logger.info(f"Trimming the image")
+    image = trim_image(image, *trim_params)
+  scale_params = parse_scale_expression(args.input_scale)
+  if scale_params:
+    logger.info(f"Scaling the image")
+    if scale_params[1] is None:
+      scale_params = get_scaled_image_size(image, scale_params[0])
+    image = scale_image(image, *scale_params)
+  return image
 
 
 def edit_image(image, meta, args):

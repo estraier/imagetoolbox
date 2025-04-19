@@ -219,6 +219,7 @@ The workflow of this command is the following.
 
   1: All input image files are loaded and converted to lenear RGB channels.
        use --raw-preset to change the preset applied to RAW images.
+       use --input-trim and --input-scale to reduce the input for previewing purposes.
   2: Optionally, white balance of each image is adjusted.
        use -wb or --white-balance to specify "auto" or RGB weights like 10,13,11
   3: Optionally, brightness of each image is adjusted to their average.

@@ -591,6 +591,22 @@ class TestItbStack(unittest.TestCase):
     self.assertTrue(os.path.exists(file2_path))
 
   @patch.object(sys, "argv", [])
+  def test_run_command_muptiple(self):
+    file1_path = os.path.join(self.temp_path, "output1.npz")
+    file2_path = os.path.join(self.temp_path, "output2.mp4")
+    file3_path = os.path.join(self.temp_path, "output3.mov")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[blank:color=red]", "--output", file1_path]
+    main()
+    self.assertTrue(os.path.exists(file1_path))
+    sys.argv[:] = ["itb_stack.py", file1_path, "--output", file2_path,
+                   "--input-trim", "10", "--input-scale", "300"]
+    main()
+    self.assertTrue(os.path.exists(file2_path))
+    sys.argv[:] = ["itb_stack.py", file2_path, "--output", file3_path]
+    main()
+    self.assertTrue(os.path.exists(file3_path))
+
+  @patch.object(sys, "argv", [])
   def test_run_command_merge_average(self):
     output_path = os.path.join(self.temp_path, "output.tif")
     sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
