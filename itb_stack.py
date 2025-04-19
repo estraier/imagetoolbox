@@ -200,6 +200,10 @@ def check_icc_profile_name(file_path, default="srgb", meta=None):
     name = "prophoto_rgb"
     if profile:
       ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
+  if "bt.2020" in desc or "bt 2020" in desc:
+    name = "bt2020"
+    if profile:
+      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   elif "adobe" in desc:
     name = "adobe_rgb"
     if profile:
@@ -586,18 +590,6 @@ def linear_to_srgb(image):
   return np.where(image <= 0.0031308, image * 12.92, 1.055 * cv2.pow(image, 1.0 / 2.4) - 0.055)
 
 
-def prophoto_rgb_to_linear(image):
-  """Converts ProPhoto RGB gamma into linear RGB."""
-  assert image.dtype == np.float32
-  return np.where(image < 0.03125, image / 16.0, np.power(image, 1.8))
-
-
-def linear_to_prophoto_rgb(image):
-  """Converts linear RGB into ProPhoto RGB gamma."""
-  assert image.dtype == np.float32
-  return np.where(image < 0.001953, image * 16.0, np.power(image, 1.0 / 1.8))
-
-
 def adobe_rgb_to_linear(image):
   """Converts Adobe RGB gamma into linear RGB."""
   assert image.dtype == np.float32
@@ -622,31 +614,48 @@ def linear_to_bt2020(image):
   return np.power(np.clip(image, 0.0, 1.0), 1.0 / 2.4)
 
 
+def prophoto_rgb_to_linear(image):
+  """Converts ProPhoto RGB gamma into linear RGB."""
+  assert image.dtype == np.float32
+  return np.where(image < 0.03125, image / 16.0, np.power(image, 1.8))
+
+
+def linear_to_prophoto_rgb(image):
+  """Converts linear RGB into ProPhoto RGB gamma."""
+  assert image.dtype == np.float32
+  return np.where(image < 0.001953, image * 16.0, np.power(image, 1.0 / 1.8))
+
+
 ICC_PROFILES = {
   "srgb": {
+    "name": "sRGB IEC61966-2.1",
     "to_linear": srgb_to_linear,
     "from_linear": linear_to_srgb,
     "file_names": ["sRGB.icc", "sRGB_IEC61966-2-1_no_black_scaled.icc"],
   },
-  "prophoto_rgb": {
-    "to_linear": prophoto_rgb_to_linear,
-    "from_linear": linear_to_prophoto_rgb,
-    "file_names": ["ProPhoto-RGB.icc", "ProPhotoRGB.icc"],
-  },
   "adobe_rgb": {
+    "name": "Adobe RGB (1998)",
     "to_linear": adobe_rgb_to_linear,
     "from_linear": linear_to_adobe_rgb,
     "file_names": ["Adobe-RGB.icc", "AdobeRGB1998.icc"],
   },
   "display_p3": {
+    "name": "Display P3",
     "to_linear": srgb_to_linear,
     "from_linear": linear_to_srgb,
     "file_names": ["Display-P3.icc", "DisplayP3.icc"],
   },
   "bt2020": {
+    "name": "ITU-R BT.2020 Reference Display",
     "to_linear": bt2020_to_linear,
     "from_linear": linear_to_bt2020,
     "file_names": ["BT2020.icc", "Rec-2020.icc", "Rec2020-Rec1886.icc"],
+  },
+  "prophoto_rgb": {
+    "name": "ProPhoto RGB",
+    "to_linear": prophoto_rgb_to_linear,
+    "from_linear": linear_to_prophoto_rgb,
+    "file_names": ["ProPhoto-RGB.icc", "ProPhotoRGB.icc"],
   },
 }
 
@@ -3923,7 +3932,7 @@ def make_ap_args():
                   help="put a caption text: TEXT|SIZE|COLOR|POS eg. Hello|5|ddeeff|tl")
   ap.add_argument("--gamut", default="", metavar="name",
                   help="convert gamut using ICC profiles:"
-                  " srgb, adobe, prophoto, displayp3, bt2020")
+                  " srgb, adobe, displayp3, bt2020, prophoto")
   ap.add_argument("--input-video-fps", type=float, default=1, metavar="num",
                   help="input video files with the FPS")
   ap.add_argument("--output-video-fps", type=float, default=1, metavar="num",
@@ -4300,12 +4309,12 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
       norm_gamut = "srgb"
     elif norm_gamut in ["adobe", "adb", "a"]:
       norm_gamut = "adobe_rgb"
-    elif norm_gamut in ["prophoto", "pro", "p"]:
-      norm_gamut = "prophoto_rgb"
     elif norm_gamut in ["displayp3", "disp", "d", "p3"]:
       norm_gamut = "display_p3"
     elif norm_gamut in ["bt2020", "rec2020", "2020"]:
       norm_gamut = "bt2020"
+    elif norm_gamut in ["prophoto", "pro", "p"]:
+      norm_gamut = "prophoto_rgb"
     if icc_name == norm_gamut:
       logger.info(f"Preserving color gamut: {icc_name}")
     else:
