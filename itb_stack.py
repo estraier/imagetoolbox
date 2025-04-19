@@ -194,13 +194,13 @@ def check_icc_profile_name(file_path, default="srgb", meta=None):
       pass
   if not desc and meta:
     desc = meta.get("_icc_", "")
-  desc = desc.strip().lower()
+  desc = re.sub(r"[^a-z0-9]+", " ", desc.lower()).strip()
   name = default
   if "prophoto" in desc:
     name = "prophoto_rgb"
     if profile:
       ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
-  if "bt.2020" in desc or "bt 2020" in desc:
+  if "bt 2020" in desc or "bt2020" in desc:
     name = "bt2020"
     if profile:
       ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
@@ -545,14 +545,16 @@ def get_metadata(path):
   return meta
 
 
-def copy_metadata(source_path, target_path):
+def copy_metadata(source_path, target_path, icc_name):
   """Copies EXIF data from source image to target image."""
   source_ext = os.path.splitext(source_path)[1].lower()
   target_ext = os.path.splitext(target_path)[1].lower()
+  profile = ICC_PROFILES[icc_name]
   if has_command(CMD_EXIFTOOL) and source_ext in EXTS_EXIFTOOL and target_ext in EXTS_EXIFTOOL:
     logger.info(f"Copying metadata")
     cmd = [CMD_EXIFTOOL, "-TagsFromFile", source_path,
-           "-thumbnailimage=", "-f", "-m", "-overwrite_original", target_path]
+           "-thumbnailimage=", "-f", "-m", "-overwrite_original",
+           f"-iccprofilename={profile['name']}", target_path]
     logger.debug(f"running: {' '.join(cmd)}")
     try:
       subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
@@ -4173,7 +4175,7 @@ def postprocess_video(args, images, meta_list, icc_names):
     edited_images.append(image)
   logger.info(f"Saving the output file as a video")
   save_video(args.output, edited_images, args.output_video_fps)
-  copy_metadata(args.inputs[0], args.output)
+  copy_metadata(args.inputs[0], args.output, icc_names[0])
 
 
 def crop_to_match(image, target_size):
@@ -4324,7 +4326,7 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
   logger.info(f"Saving the output file as an image")
   ext = os.path.splitext(args.output)[1].lower()
   save_image(args.output, merged_image, bits, icc_name)
-  copy_metadata(args.inputs[0], args.output)
+  copy_metadata(args.inputs[0], args.output, icc_name)
   if not attach_icc_profile(args.output, icc_name):
     copy_icc_profile(args.inputs[0], args.output)
 
