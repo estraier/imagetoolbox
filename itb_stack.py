@@ -3541,7 +3541,7 @@ def enhance_texture_image(image, radius, gamma=2.8, smooth_mask_weight=0.9):
   return np.clip(restored, 0, 1)
 
 
-def unsharp_image_gaussian(image, radius, smooth_mask_weight=0.5):
+def unsharp_image_gaussian(image, radius, gamma=1.4, smooth_mask_weight=0.5):
   """Applies unsharp mask by Gaussian blur."""
   assert image.dtype == np.float32
   assert radius > 0
@@ -3554,11 +3554,14 @@ def unsharp_image_gaussian(image, radius, smooth_mask_weight=0.5):
     sigma = radius / 2
     amount = 1.2
     threshold=0.03
-  blur_image = cv2.GaussianBlur(image, (ksize, ksize), sigma)
-  diff_image = image - blur_image
+  gamma_image = np.power(image, 1 / gamma)
+  blur_image = cv2.GaussianBlur(gamma_image, (ksize, ksize), sigma)
+  diff_image = gamma_image - blur_image
   mask = np.abs(diff_image) > threshold
   diff_image *= amount * mask.astype(np.float32)
-  sharp_image = image + diff_image
+  sharp_image = gamma_image + diff_image
+  sharp_image = np.clip(sharp_image, 0, 1)
+  sharp_image = np.power(sharp_image, gamma)
   if smooth_mask_weight > 0:
     sharpness = compute_sharpness_naive(image, high_low_balance=0.1)
     mask_amount = ((2 / max(radius + 1, 2)) ** 0.75) * smooth_mask_weight
@@ -4015,7 +4018,7 @@ def make_ap_args():
                   help="apply portrait blur by the pyramid level")
   ap.add_argument("--texture", default="0", metavar="num",
                   help="enhance texture by the pixel radius.")
-  ap.add_argument("--unsharp", type=int, default=0, metavar="num",
+  ap.add_argument("--unsharp", default="0", metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
   ap.add_argument("--trim", default="", metavar="numlist",
                   help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
@@ -4561,13 +4564,17 @@ def edit_image(image, meta, args):
   if texture_num > 0:
     kwargs = {}
     copy_param_to_kwargs(texture_params, kwargs, "gamma", float)
-    copy_param_to_kwargs(texture_params, kwargs, "gamma", float)
     copy_param_to_kwargs(texture_params, kwargs, "smooth_mask_weight", float)
     logger.info(f"Enhancing texture")
     image = enhance_texture_image(image, texture_num, **kwargs)
-  if args.unsharp > 0:
+  unsharp_params = parse_num_opts_expression(args.unsharp)
+  unsharp_num = unsharp_params["num"]
+  if unsharp_num > 0:
+    kwargs = {}
+    copy_param_to_kwargs(unsharp_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(unsharp_params, kwargs, "smooth_mask_weight", float)
     logger.info(f"Applying Gaussian unsharp mask")
-    image = unsharp_image_gaussian(image, args.unsharp)
+    image = unsharp_image_gaussian(image, unsharp_num, **kwargs)
   trim_params = parse_trim_expression(args.trim)
   if trim_params:
     logger.info(f"Trimming the image")
