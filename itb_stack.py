@@ -3449,7 +3449,7 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
   return np.clip(restored, 0, 1)
 
 
-def enhance_texture_image(image, radius, gamma=2.8):
+def enhance_texture_image(image, radius, gamma=2.8, smooth_mask_weight=0.9):
   """Enhances texture by detailed enhancing."""
   gamma_image = np.power(image, 1 / gamma)
   image_255 = gamma_image * 255
@@ -3461,10 +3461,15 @@ def enhance_texture_image(image, radius, gamma=2.8):
   restored_255 = converted.astype(np.float32) / np.maximum(float_ratio, 0.5)
   restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 0.9), restored_255)
   restored = np.power(restored_255 / 255, gamma)
+  if smooth_mask_weight > 0:
+    sharpness = compute_sharpness_naive(image, high_low_balance=0.1)
+    mask_amount = ((2 / max(radius + 1, 2)) ** 0.75) * smooth_mask_weight
+    mask = np.clip(sharpness * mask_amount, 0, 1)[..., np.newaxis]
+    restored = mask * restored + (1 - mask) * image
   return np.clip(restored, 0, 1)
 
 
-def unsharp_image_gaussian(image, radius):
+def unsharp_image_gaussian(image, radius, smooth_mask_weight=0.5):
   """Applies unsharp mask by Gaussian blur."""
   assert image.dtype == np.float32
   ksize = math.ceil(2 * radius) + 1
@@ -3481,6 +3486,11 @@ def unsharp_image_gaussian(image, radius):
   mask = np.abs(diff_image) > threshold
   diff_image *= amount * mask.astype(np.float32)
   sharp_image = image + diff_image
+  if smooth_mask_weight > 0:
+    sharpness = compute_sharpness_naive(image, high_low_balance=0.1)
+    mask_amount = ((2 / max(radius + 1, 2)) ** 0.75) * smooth_mask_weight
+    mask = np.clip(sharpness * mask_amount, 0, 1)[..., np.newaxis]
+    sharp_image = mask * sharp_image + (1 - mask) * image
   return np.clip(sharp_image, 0, 1)
 
 
