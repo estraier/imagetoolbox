@@ -108,6 +108,11 @@ negative, naive global algorithm is used.
   $ itb_stack.py input*.jpg -o output.jpg --histeq 1.2
   $ itb_stack.py input*.jpg -o output.jpg --histeq=-1
 
+The dehaze control enhances visibility and contrast in hazy or foggy images by removing
+atmospheric veils while preserving natural colors.  You set the strength between 0 and 1.
+
+  $ itb_stack.py input*.jpg -o output.jpg --dehaze 0.4
+
 Merging multiple pictures taken with high sensitivity is effective in suppressing noise.  Whereas
 median composition is widely used, the "denoise" mode provides better results in most cases.
 
@@ -234,6 +239,7 @@ The workflow of this command is the following.
        use -nr or --no-restore to disable it.
   8: Optionally, various postprocessing methods are applied.
        --histeq to apply histgram equalization
+       --dehaze to apply dehaze enhancement
        --linear to modify brightness by a multiplicative function
        --gamma to modify brightness by a gamma function
        --slog to modify brightness by a scaled logarithmic function
