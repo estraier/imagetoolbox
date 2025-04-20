@@ -755,6 +755,7 @@ def adjust_level_image(
 def apply_linear_image(image, factor, rolloff=0.5, clip=True):
   """Adjusts image brightness by a linear multiplier."""
   assert image.dtype == np.float32
+  assert factor >= 0
   if factor < 0:
     return factor
   image *= factor
@@ -768,6 +769,7 @@ def apply_linear_image(image, factor, rolloff=0.5, clip=True):
 def apply_gamma_image(image, gamma):
   """Adjusts image brightness by a gamma transformation."""
   assert image.dtype == np.float32
+  assert gamma >= 0
   if gamma < 1e-6:
     return image
   image = np.power(image, 1 / gamma)
@@ -803,6 +805,8 @@ def naive_inverse_sigmoid(x, gain, mid):
 def sigmoidal_contrast_image(image, gain, mid):
   """Applies sigmoidal contrast adjustment with a scaled sigmoid function."""
   assert image.dtype == np.float32
+  assert gain > 0
+  assert 0 <= mid <= 1
   min_val = naive_sigmoid(0.0, gain, mid)
   max_val = naive_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
@@ -812,6 +816,8 @@ def sigmoidal_contrast_image(image, gain, mid):
 def inverse_sigmoidal_contrast_image(image, gain, mid):
   """Applies inverse sigmoidal contrast adjustment."""
   assert image.dtype == np.float32
+  assert gain > 0
+  assert 0 <= mid <= 1
   min_val = naive_inverse_sigmoid(0.0, gain, mid)
   max_val = naive_inverse_sigmoid(1.0, gain, mid)
   diff = max_val - min_val
@@ -821,6 +827,7 @@ def inverse_sigmoidal_contrast_image(image, gain, mid):
 def apply_sigmoid_image(image, gain, mid=0.5):
   """Adjust image brightness by a sigmoid transformation."""
   assert image.dtype == np.float32
+  assert 0 <= mid <= 1
   if gain > 1e-6:
     min_val = naive_sigmoid(0.0, gain, mid)
     max_val = naive_sigmoid(1.0, gain, mid)
@@ -1118,6 +1125,7 @@ def adjust_white_balance_image(image, expr="auto"):
 def adjust_exposure_image(image, target_brightness, max_tries=10, max_dist=0.01):
   """Adjusts the exposure of an image to a target brightness."""
   assert image.dtype == np.float32
+  assert 0 <= target_brightness <= 1
   brightness = compute_brightness(image) + 1e-6
   dist = abs(np.log(target_brightness / brightness))
   logger.debug(f"tries=0, gain=0.000, dist={dist:.3f},"
@@ -1582,6 +1590,8 @@ def merge_images_maximum(images):
 def merge_images_denoise(images, clip_limit=0.4, blur_radius=3):
   """Merge images by blurred geometric mean-based median."""
   assert all(image.dtype == np.float32 for image in images)
+  assert clip_limit >= 0
+  assert blur_radius >= 0
   images = np.stack(images, axis=3).astype(np.float32)
   h, w, c, n = images.shape
   ksize = math.ceil(2 * blur_radius) + 1
@@ -2190,6 +2200,7 @@ def merge_images_laplacian_pyramids_focus(images, weights, pyramid_levels):
 def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
   """Merges images by focus stacking."""
   assert all(image.dtype == np.float32 for image in images)
+  assert pyramid_levels > 0
   h, w = images[0].shape[:2]
   pyramid_levels = min(pyramid_levels, int(math.log2(min(h, w))) - 3)
   sharpness_maps = np.array([compute_sharpness_naive(img) for img in images])
@@ -2226,6 +2237,7 @@ def merge_images_focus_stacking(images, smoothness=0.5, pyramid_levels=8):
 def merge_images_grid(images, columns=1, margin=0, background=(0.5, 0.5, 0.5)):
   """Merges images in a grid."""
   assert all(image.dtype == np.float32 for image in images)
+  assert columns > 0
   num_images = len(images)
   rows = (num_images + columns - 1) // columns
   widths = [0] * columns
@@ -2400,6 +2412,7 @@ PRESETS = {
 
 def apply_preset_image(image, name, meta, exposure_bracket):
   """Applies a preset on the image."""
+  assert image.dtype == np.float32
   ev_match = re.fullmatch(r"(?i)([-+]\d+(?:\.\d+)?)(ev)?", name)
   kelvin_match = re.fullmatch(r"(?i)(\d+)k", name)
   if ev_match:
@@ -2459,6 +2472,7 @@ def apply_preset_image(image, name, meta, exposure_bracket):
 def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
   """Applies global histogram equalization contrast enhancement."""
   assert image.dtype == np.float32
+  assert gamma > 0
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
   l = np.clip(l, 0, 100)
@@ -2490,6 +2504,7 @@ def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
 def apply_clahe_image(image, clip_limit, gamma=2.8, restore_color=True):
   """Applies CLAHE contrast enhancement."""
   assert image.dtype == np.float32
+  assert gamma > 0
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
   l = np.clip(l, 0, 100)
@@ -2519,6 +2534,51 @@ def apply_clahe_image(image, clip_limit, gamma=2.8, restore_color=True):
     final_hsv = cv2.merge((new_h, merged_s, new_v))
     enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
   return np.clip(enhanced_image, 0, 1)
+
+
+def apply_dehaze_image(image, strength, restore_color=True):
+  """Applies dehaze enhancement."""
+  assert image.dtype == np.float32
+  assert 0.0 <= strength <= 1.0
+  h, w = image.shape[:2]
+  margin_h = int(h * 0.02)
+  margin_w = int(w * 0.02)
+  trimmed = image[margin_h:h - margin_h, margin_w:w - margin_w]
+  masked_trimmed = trimmed.reshape(-1, 3)
+  haze_values = np.min(masked_trimmed, axis=1)
+  num_pixels = max(1, int(len(haze_values) * 0.001))
+  haze_indices = np.argpartition(haze_values, -num_pixels)[-num_pixels:]
+  top_haze_pixels = masked_trimmed[haze_indices]
+  airlight_percentile = 100 - (0.5 + 5.0 * strength)
+  airlight_rgb = np.percentile(top_haze_pixels, airlight_percentile, axis=0)
+  airlight_rgb = airlight_rgb[np.newaxis, np.newaxis, :]
+  airlight = apply_rolloff(airlight_rgb, asymptotic=0.9)[0, 0]
+  haze_channel_full = np.min(image, axis=2)
+  omega = 0.95 * strength
+  transmission = 1.0 - omega * haze_channel_full / (np.max(airlight) + 1e-6)
+  transmission = np.clip(transmission, 0.1, 1.0)[..., np.newaxis]
+  scene = (image - airlight) / np.maximum(transmission, 1e-6) + airlight
+  scene = np.clip(scene, 0, 1)
+  black_percentile = (0.4 + 4.0 * strength)
+  black = np.percentile(scene, black_percentile)
+  black += 0.04 * strength
+  strength_gamma = strength ** 0.5
+  adjusted = (scene - black * strength_gamma) / (1.0 - black * strength_gamma + 1e-6)
+  inverted = 1.0 - adjusted
+  rolled = apply_rolloff(inverted, asymptotic=0.5)
+  enhanced = 1.0 - rolled
+  if restore_color:
+    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    _, old_s, old_v = cv2.split(old_hsv)
+    new_hsv = cv2.cvtColor(enhanced, cv2.COLOR_BGR2HSV)
+    new_h, new_s, new_v = cv2.split(new_hsv)
+    highlight_risk = (new_v - old_v) / (1 - old_v + 1e-6)
+    shadow_risk = (old_v - new_v) / (old_v + 1e-6)
+    risk = np.clip(np.maximum(highlight_risk, shadow_risk), 0.1, 0.9)
+    merged_s = (1 - risk) * old_s + risk * new_s
+    final_hsv = cv2.merge((new_h, merged_s, new_v))
+    enhanced = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+  return np.clip(enhanced, 0, 1)
 
 
 def apply_artistic_filter_image(image, name):
@@ -2688,6 +2748,8 @@ def optimize_exposure_image(image, strength, upper_pecentile=99, upper_target=0.
                             mask="face", mask_center=(0.5, 0.5), mask_reach=0.9, mask_decay=0.3,
                             gamma_scale=3.0, log_scale=None):
   """Optimizes exposure of the image automatically."""
+  assert image.dtype == np.float32
+  assert strength > 0
   strength = min(strength, 1.0)
   h, w = image.shape[:2]
   margin_h = int(h * 0.02)
@@ -3048,6 +3110,7 @@ def convert_image_lcs_tricolor(image):
 def saturate_image_linear(image, factor, rolloff=0.7):
   """Saturates colors of the image by linear multiplication."""
   assert image.dtype == np.float32
+  assert factor > 0
   hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
   h, s, v = cv2.split(hsv)
   factor = min(max(0.01, factor), 100.0)
@@ -3126,6 +3189,7 @@ def compute_color_noises(image, ksize=5, percentile=70, gamma=2.0):
 def bilateral_denoise_image(image, radius):
   """Applies bilateral denoise."""
   assert image.dtype == np.float32
+  assert radius > 0
   ksize = math.ceil(2 * radius) + 1
   sigma_color = min(0.05 * math.sqrt(ksize), 0.35)
   sigma_space = 10 * math.sqrt(ksize)
@@ -3163,6 +3227,7 @@ def masked_denoise_image(image, color_blur_level=3, luminance_blur_radius=3):
 def blur_image_gaussian(image, radius):
   """Applies Gaussian blur."""
   assert image.dtype == np.float32
+  assert radius > 0
   ksize = math.ceil(2 * radius) + 1
   return cv2.GaussianBlur(image, (ksize, ksize), 0)
 
@@ -3192,6 +3257,7 @@ def pyramid_up_naive(image):
 def blur_image_pyramid(image, levels, decay=0.0, contrast=1.0):
   """Applies pyramid blur."""
   assert image.dtype == np.float32
+  assert levels > 0
   h, w = image.shape[:2]
   levels = min(levels, int(math.log2(min(h, w))) - 1)
   factor = 2 ** levels
@@ -3226,6 +3292,7 @@ def compute_levels_blur_image_portrait(image):
 def blur_image_naive_ecpb(image, levels, decay=0.0, contrast=1.0, edge_threshold=0.8):
   """Applies portrait blur by naive Edge-Contained Pyramid Blur."""
   assert image.dtype == np.float32
+  assert levels > 0
   h, w = image.shape[:2]
   levels = min(levels, int(math.log2(min(h, w))) - 1)
   factor = 2 ** levels
@@ -3310,6 +3377,7 @@ def blur_image_stacked_ecpb(image, max_level, decay=0.0, contrast=1.0, edge_thre
                             bokeh_balance=0.75):
   """Applies portrait blur by naive stacked Edge-Contained Pyramid Blur."""
   assert image.dtype == np.float32
+  assert max_level > 0
   h, w = image.shape[:2]
   max_level = min(max_level, int(math.log2(min(h, w))) - 1)
   factor = 2 ** max_level
@@ -3421,6 +3489,8 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
                         grabcut=1.0, attractor=(0.5, 0.5), attractor_weight=0.1,
                         finish_edge=1.0):
   """Applies portrait blur according to the configuration."""
+  assert image.dtype == np.float32
+  assert max_level > 0
   blurred = image
   for i in range(repeat):
     if max_level > 0:
@@ -3451,6 +3521,8 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
 
 def enhance_texture_image(image, radius, gamma=2.8, smooth_mask_weight=0.9):
   """Enhances texture by detailed enhancing."""
+  assert image.dtype == np.float32
+  assert radius > 0
   gamma_image = np.power(image, 1 / gamma)
   image_255 = gamma_image * 255
   image_bytes = image_255.astype(np.uint8)
@@ -3472,6 +3544,7 @@ def enhance_texture_image(image, radius, gamma=2.8, smooth_mask_weight=0.9):
 def unsharp_image_gaussian(image, radius, smooth_mask_weight=0.5):
   """Applies unsharp mask by Gaussian blur."""
   assert image.dtype == np.float32
+  assert radius > 0
   ksize = math.ceil(2 * radius) + 1
   if radius == 1:
     sigma = 0.8
@@ -3497,6 +3570,10 @@ def unsharp_image_gaussian(image, radius, smooth_mask_weight=0.5):
 def trim_image(image, top, right, bottom, left):
   """Trims a image by percentages from sides."""
   assert image.dtype == np.float32
+  assert top >= 0
+  assert right >= 0
+  assert bottom >= 0
+  assert left >= 0
   h, w = image.shape[:2]
   top_px = int(h * top)
   right_px = int(w * right)
@@ -3543,6 +3620,8 @@ def get_scaled_image_size(image, long_size):
 def scale_image(image, width, height):
   """Scales the image into the new geometry."""
   assert image.dtype == np.float32
+  assert width > 0
+  assert height > 0
   h, w = image.shape[:2]
   if width * height > h * w:
     interpolation = cv2.INTER_LANCZOS4
@@ -3600,6 +3679,7 @@ def parse_color_expr(expr):
 
 def write_caption(image, capexpr):
   """Write a text on an image."""
+  assert image.dtype == np.float32
   h, w = image.shape[:2]
   fields = capexpr.split("|")
   text = fields[0]
@@ -3897,6 +3977,8 @@ def make_ap_args():
                   help="apply a preset: light, dark, lift, drop, soft, hard, muted, vivid")
   ap.add_argument("--histeq", default="0", metavar="num",
                   help="apply histogram equalization by the clip limit. negative means global")
+  ap.add_argument("--dehaze", default="0", metavar="num",
+                  help="apply dehaze enhancement by the strength. 1 means full amount")
   ap.add_argument("--art", default="", metavar="name",
                   help="apply an artistic filter: pencil, stylized, cartoon")
   ap.add_argument("--optimize-exposure", "-ox", default="0", metavar="num",
@@ -4395,6 +4477,13 @@ def edit_image(image, meta, args):
     copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
     copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
     image = apply_global_histeq_image(image, **kwargs)
+  dehaze_params = parse_num_opts_expression(args.dehaze)
+  dehaze_num = dehaze_params["num"]
+  if dehaze_num > 0:
+    logger.info(f"Applying dehaze enhancement")
+    kwargs = {}
+    copy_param_to_kwargs(dehaze_params, kwargs, "restore_color", parse_boolean)
+    image = apply_dehaze_image(image, dehaze_num, **kwargs)
   if args.art and args.gray != "none":
     logger.info(f"Applying an artistic filter")
     image = apply_artistic_filter_image(image, args.art)
