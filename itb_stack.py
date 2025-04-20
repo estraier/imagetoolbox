@@ -4013,7 +4013,7 @@ def make_ap_args():
                   help="apply Gaussian blur by the pixel radius. negative uses pyramid blur")
   ap.add_argument("--portrait", default="0", metavar="num",
                   help="apply portrait blur by the pyramid level")
-  ap.add_argument("--texture", type=float, default=0, metavar="num",
+  ap.add_argument("--texture", default="0", metavar="num",
                   help="enhance texture by the pixel radius.")
   ap.add_argument("--unsharp", type=int, default=0, metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
@@ -4556,9 +4556,15 @@ def edit_image(image, meta, args):
     copy_param_to_kwargs(portrait_params, kwargs, "finish_edge", float)
     logger.info(f"Applying portrait blur by {portrait_levels} levels")
     image = blur_image_portrait(image, portrait_levels, **kwargs)
-  if args.texture > 0:
+  texture_params = parse_num_opts_expression(args.texture)
+  texture_num = texture_params["num"]
+  if texture_num > 0:
+    kwargs = {}
+    copy_param_to_kwargs(texture_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(texture_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(texture_params, kwargs, "smooth_mask_weight", float)
     logger.info(f"Enhancing texture")
-    image = enhance_texture_image(image, args.texture)
+    image = enhance_texture_image(image, texture_num, **kwargs)
   if args.unsharp > 0:
     logger.info(f"Applying Gaussian unsharp mask")
     image = unsharp_image_gaussian(image, args.unsharp)
