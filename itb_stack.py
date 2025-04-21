@@ -2561,7 +2561,7 @@ def apply_dehaze_image(image, strength, restore_color=True):
   scene = np.clip(scene, 0, 1)
   black_percentile = (0.4 + 4.0 * strength)
   black = np.percentile(scene, black_percentile)
-  black += 0.04 * strength
+  black += 0.02 * strength
   strength_gamma = strength ** 0.5
   adjusted = (scene - black * strength_gamma) / (1.0 - black * strength_gamma + 1e-6)
   inverted = 1.0 - adjusted
@@ -3519,7 +3519,7 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
   return np.clip(restored, 0, 1)
 
 
-def enhance_texture_image(image, radius, gamma=2.8, smooth_mask_weight=0.9):
+def enhance_texture_image(image, radius, gamma=2.0, smooth_mask_weight=0.9):
   """Enhances texture by detailed enhancing."""
   assert image.dtype == np.float32
   assert radius > 0
@@ -3528,11 +3528,15 @@ def enhance_texture_image(image, radius, gamma=2.8, smooth_mask_weight=0.9):
   image_bytes = image_255.astype(np.uint8)
   float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), 1)
   sigma_s = radius / 2
-  sigma_r = max(0.05, 0.3 / (sigma_s + 1))
+  sigma_r = max(0.04, 0.3 / (sigma_s + 1))
   converted = cv2.detailEnhance(image_bytes, sigma_s=sigma_s, sigma_r=sigma_r)
   restored_255 = converted.astype(np.float32) / np.maximum(float_ratio, 0.5)
   restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 0.9), restored_255)
   restored = np.power(restored_255 / 255, gamma)
+  old_high = np.percentile(image, 99)
+  new_high = np.percentile(restored, 99)
+  if new_high > old_high and new_high > 0.7:
+    restored *= old_high / new_high
   if smooth_mask_weight > 0:
     sharpness = compute_sharpness_naive(image, high_low_balance=0.1)
     mask_amount = ((2 / max(radius + 1, 2)) ** 0.75) * smooth_mask_weight
