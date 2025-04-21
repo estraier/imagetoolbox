@@ -2349,7 +2349,7 @@ PRESETS = {
   },
   "raw-muted": {
     "auto-denoise": [400, 1600, 6400],
-    "stretch": (0.86, 99.6),
+    "stretch": (0.90, 99.6),
     "sigmoid": (2.7, 0.45),
     "slog": 0.4,
     "saturation": 1.1,
@@ -2357,7 +2357,7 @@ PRESETS = {
   },
   "raw-std": {
     "auto-denoise": [400, 1600, 6400],
-    "stretch": (0.88, 99.4),
+    "stretch": (0.92, 99.4),
     "sigmoid": (3.0, 0.45),
     "slog": 0.5,
     "saturation": 1.2,
@@ -2365,7 +2365,7 @@ PRESETS = {
   },
   "raw-vivid": {
     "auto-denoise": [400, 1600, 6400],
-    "stretch": (0.90, 99.2),
+    "stretch": (0.94, 99.2),
     "sigmoid": (3.3, 0.45),
     "slog": 0.6,
     "saturation": 1.3,
