@@ -3955,7 +3955,7 @@ def make_ap_args():
                   help="output image path (dafault=output.jpg)")
   ap.add_argument("--raw-preset", default="raw-std", metavar="name",
                   help="preset for raw development:"
-                  " raw-muted, raw-std (default), raw-vivid")
+                  " raw-pure, raw-muted, raw-std (default), raw-vivid")
   ap.add_argument("--input-trim", default="", metavar="numlist",
                   help="trim sides: TOP,LEFT,BOTTOM,RIGHT in percentage eg. 5,10,3,7")
   ap.add_argument("--input-scale", default="", metavar="numlist",
