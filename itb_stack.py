@@ -700,7 +700,7 @@ def stretch_contrast_image(image, upper_target=0.9, upper_percentile=99,
   lower = np.percentile(gray, lower_percentile) if lower_percentile >= 0 else 0.0
   scale = (upper_target - lower_target) / max(upper - lower, 1e-6)
   bias = lower_target - lower * scale
-  stretched = image * scale + bias
+  stretched = image * np.float32(scale + bias)
   if clip:
     stretched = np.clip(stretched, 0.0, 1.0)
   return stretched
