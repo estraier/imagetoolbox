@@ -327,6 +327,10 @@ def load_image_raw(file_path, meta=None):
   """Loads a raw image and returns its linear RGB data as a NumPy array."""
   import rawpy
   logger.debug(f"loading raw image: {file_path}")
+  try:
+    highlight_mode = rawpy.HighlightMode.ReconstructDefault
+  except:
+    highlight_mode = rawpy.HighlightMode.Blend
   with rawpy.imread(file_path) as raw:
     icc_name = "srgb"
     rgb = raw.postprocess(
@@ -334,7 +338,7 @@ def load_image_raw(file_path, meta=None):
       output_bps=16,
       no_auto_bright=True,
       use_camera_wb=True,
-      highlight_mode=rawpy.HighlightMode.Blend,
+      highlight_mode=highlight_mode,
       gamma=None,
       user_flip=0,
       fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Off,
