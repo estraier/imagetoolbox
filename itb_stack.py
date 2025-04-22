@@ -4052,7 +4052,7 @@ def make_ap_args():
   ap.add_argument("--portrait", default="0", metavar="num",
                   help="apply portrait blur by the pyramid level")
   ap.add_argument("--texture", default="0", metavar="num",
-                  help="enhance texture by the pixel radius.")
+                  help="enhance texture by the pixel radius. negative means softening")
   ap.add_argument("--unsharp", default="0", metavar="num",
                   help="apply Gaussian unsharp mask by the pixel radius.")
   ap.add_argument("--trim", default="", metavar="numlist",
