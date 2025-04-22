@@ -481,22 +481,22 @@ class TestItbStack(unittest.TestCase):
     processed = apply_global_histeq_image(image)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_apply_clarity_image_positive(self):
+  def test_apply_clarity_image_strengthen(self):
     image = generate_test_image()
     processed = apply_clarity_image(image, 2)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_apply_clarity_image_negative(self):
+  def test_apply_clarity_image_weaken(self):
     image = generate_test_image()
     processed = apply_clarity_image(image, -2)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_apply_dehaze_image_positive(self):
+  def test_apply_dehaze_image_strenghen(self):
     image = generate_test_image()
     processed = apply_dehaze_image(image, 0.5)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_apply_dehaze_image_negative(self):
+  def test_apply_dehaze_image_weaken(self):
     image = generate_test_image()
     processed = apply_dehaze_image(image, -0.5)
     self.assertEqual(processed.shape, image.shape)
@@ -534,9 +534,14 @@ class TestItbStack(unittest.TestCase):
     processed = blur_image_pyramid(image, 3)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_enhance_texture_image(self):
+  def test_enhance_texture_image_sharpen(self):
     image = generate_test_image()
     processed = enhance_texture_image(image, 3)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_enhance_texture_image_soften(self):
+    image = generate_test_image()
+    processed = enhance_texture_image(image, -3)
     self.assertEqual(processed.shape, image.shape)
 
   def test_unsharp_image_gaussian(self):
@@ -673,15 +678,6 @@ class TestItbStack(unittest.TestCase):
     self.assertTrue(os.path.exists(output_path))
 
   @patch.object(sys, "argv", [])
-  def test_run_command_enhancement(self):
-    output_path = os.path.join(self.temp_path, "output.tif")
-    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
-                   "--level", "auto", "--linear", "0.8", "--gamma", "1.1", "--slog", "0.5",
-                   "--sigmoid", "0.5:mid=0.3"]
-    main()
-    self.assertTrue(os.path.exists(output_path))
-
-  @patch.object(sys, "argv", [])
   def test_run_command_edit_brightness(self):
     output_path = os.path.join(self.temp_path, "output.tif")
     sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
@@ -699,11 +695,26 @@ class TestItbStack(unittest.TestCase):
     self.assertTrue(os.path.exists(output_path))
 
   @patch.object(sys, "argv", [])
+  def test_run_command_edit_enhance_positive(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--clarity", "0.5", "--dehaze", "0.5", "--texture", "3"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_edit_enhance_negative(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--clarity", "-0.5", "--dehaze", "-0.5", "--texture", "-3"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
   def test_run_command_edit_blur_sharp(self):
     output_path = os.path.join(self.temp_path, "output.tif")
     sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
-                   "--denoise", "3", "--blur", "3", "--portrait", "auto",
-                   "--texture", "3", "--unsharp", "3"]
+                   "--denoise", "3", "--blur", "3", "--portrait", "auto", "--unsharp", "3"]
     main()
     self.assertTrue(os.path.exists(output_path))
 

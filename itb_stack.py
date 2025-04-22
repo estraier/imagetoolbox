@@ -3548,14 +3548,18 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
 def enhance_texture_image(image, radius, gamma=2.0, smooth_mask_weight=0.8):
   """Enhances texture by detailed enhancing."""
   assert image.dtype == np.float32
-  assert radius > 0
   gamma_image = np.power(image, 1 / gamma)
   image_255 = gamma_image * 255
   image_bytes = image_255.astype(np.uint8)
   float_ratio = np.where(image_bytes > 0, image_bytes / np.maximum(image_255, 1e-6), 1)
-  sigma_s = radius / 2
-  sigma_r = max(0.04, 0.3 / (sigma_s + 1))
-  converted = cv2.detailEnhance(image_bytes, sigma_s=sigma_s, sigma_r=sigma_r)
+  if radius > 0:
+    sigma_s = radius / 2
+    sigma_r = max(0.04, 0.3 / (sigma_s + 1))
+    converted = cv2.detailEnhance(image_bytes, sigma_s=sigma_s, sigma_r=sigma_r)
+  else:
+    sigma_s = radius * -20
+    sigma_r = 0.2
+    converted = cv2.edgePreservingFilter(image_bytes, flags=1, sigma_s=sigma_s, sigma_r=sigma_r)
   restored_255 = converted.astype(np.float32) / np.maximum(float_ratio, 0.5)
   restored_255 = np.where(converted == 0, np.minimum(image_255 * 0.9, 0.9), restored_255)
   restored = np.power(restored_255 / 255, gamma)
@@ -3566,6 +3570,8 @@ def enhance_texture_image(image, radius, gamma=2.0, smooth_mask_weight=0.8):
   if smooth_mask_weight > 0:
     sharpness = compute_sharpness_naive(image)
     mask = np.clip(1.0 - sharpness, 0, 1)[..., np.newaxis]
+    if radius < 0:
+      mask = 1 - mask
     restored = (1 - smooth_mask_weight * mask) * restored + (smooth_mask_weight * mask) * image
   return np.clip(restored, 0, 1)
 
@@ -4590,7 +4596,7 @@ def edit_image(image, meta, args):
     image = blur_image_portrait(image, portrait_levels, **kwargs)
   texture_params = parse_num_opts_expression(args.texture)
   texture_num = texture_params["num"]
-  if texture_num > 0:
+  if texture_num != 0:
     kwargs = {}
     copy_param_to_kwargs(texture_params, kwargs, "gamma", float)
     copy_param_to_kwargs(texture_params, kwargs, "smooth_mask_weight", float)
