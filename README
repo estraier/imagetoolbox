@@ -243,7 +243,7 @@ The workflow of this command is the following.
        --sigmoid to adjust contrast by a scaled sigmoid function
        --saturation to adjust saturation by a multiplicative function
        --vibrance to adjust saturation by a scaled logarithmic function
-       --histeq to apply histgram equalization
+       --histeq, --clarity to apply clarity enhancement
        --dehaze to apply dehaze enhancement
        --denoise, --blur, --portrait, --texture, --unsharp, to adjust noise/bokeh/sharpness
        --trim, --pers, --scale to change geometry
@@ -307,15 +307,17 @@ add tuning parameters too.
   $ itb_stack.py input*.jpg -o output.jpg -a s:nfeatures=100000  # more accurate SIFT
   $ itb_stack.py input*.jpg -o output.jpg -a e:use_affine=false  # check shift only
 
-It utilizes BGMbM (blurred geometric mean-based median) composition, where multiplicative noises
-in low-contrast area are selectively suppressed.
-
 The "denoise" merging mode utilizes BGMbM (blurred geometric mean-based median) composition, where
 multiplicative noises in low-contrast area are selectively suppressed.  The effect can be
 calibrated by options.  clip_limit=0.4 and blur_radius=3 are default values.
 
   $ itb_stack.py input*.jpg -o output.jpg -a o -m denoise:clip_limit=0.25               # sharper
   $ itb_stack.py input*.jpg -o output.jpg -a o -m denoise:clip_limit=0.5:blur_radius=4  # softer
+
+The following combination of options enhances the image automatically by simulating automatic
+exposure, clarity enhancement, dehaze enhancement, and texture enhancement of Lightroom.
+
+  $ itb_stack.py input.jpg -o output.jpg -ox 1 --clarity 0.2 --dehaze 0.2 --texture 2 --unsharp 1
 
 For unit testing, run the following command.
 

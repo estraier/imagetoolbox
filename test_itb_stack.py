@@ -478,7 +478,7 @@ class TestItbStack(unittest.TestCase):
 
   def test_apply_global_histeq_image(self):
     image = generate_test_image()
-    processed = apply_global_histeq_image(image)
+    processed = apply_global_histeq_image(image, 0.5)
     self.assertEqual(processed.shape, image.shape)
 
   def test_apply_clarity_image_strengthen(self):

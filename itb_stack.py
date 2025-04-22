@@ -3030,9 +3030,10 @@ def saturate_image_scaled_log(image, factor):
   return np.clip(mod_image, 0, 1).astype(np.float32)
 
 
-def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
+def apply_global_histeq_image(image, strength, gamma=2.8, restore_color=True):
   """Applies global histogram equalization contrast enhancement."""
   assert image.dtype == np.float32
+  assert 0 < strength <= 1
   assert gamma > 0
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
   l, a, b = cv2.split(lab)
@@ -3059,6 +3060,8 @@ def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
     merged_s = old_s * (1 - risk) + new_s * risk
     final_hsv = cv2.merge((new_h, merged_s, new_v))
     enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+  if strength < 1:
+    enhanced_image = (1 - strength) * image + strength * enhanced_image
   return np.clip(enhanced_image, 0, 1)
 
 
@@ -4036,8 +4039,10 @@ def make_ap_args():
   ap.add_argument("--vibrance", type=float, default=0, metavar="num",
                   help="saturate colors by scaled log."
                   " positive to lighten, negative to darken")
+  ap.add_argument("--histeq", default="0", metavar="num",
+                  help="apply histogram equalization by the strength.")
   ap.add_argument("--clarity", default="0", metavar="num",
-                  help="apply histogram equalization by the clip limit. negative means softening")
+                  help="apply clarity enhancement by the strength. negative means softening")
   ap.add_argument("--dehaze", default="0", metavar="num",
                   help="apply dehaze enhancement by the strength. 1 means full amount."
                   " -1 means total haze")
@@ -4356,7 +4361,9 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
   merge_name = merge_params["name"]
   be_adjusted = False
   is_hdr = False
-  if merge_name in ["average", "a", "mean"]:
+  if len(images) == 1 and merge_name == "average":
+    merged_image = images[0].copy()
+  elif merge_name in ["average", "a", "mean"]:
     logger.info(f"Merging images by average composition")
     merged_image = merge_images_average(images)
     be_adjusted = len(images) > 1
@@ -4535,6 +4542,14 @@ def edit_image(image, meta, args):
   if args.vibrance != 0:
     logger.info(f"Saturating colors by a scaled log")
     image = saturate_image_scaled_log(image, args.vibrance)
+  histeq_params = parse_num_opts_expression(args.histeq)
+  histeq_num = histeq_params["num"]
+  if histeq_num > 0:
+    logger.info(f"Applying global HE enhancement")
+    kwargs = {}
+    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
+    image = apply_global_histeq_image(image, histeq_num, **kwargs)
   clarity_params = parse_num_opts_expression(args.clarity)
   clarity_num = clarity_params["num"]
   if clarity_num != 0:
@@ -4543,12 +4558,6 @@ def edit_image(image, meta, args):
     copy_param_to_kwargs(clarity_params, kwargs, "gamma", float)
     copy_param_to_kwargs(clarity_params, kwargs, "restore_color", parse_boolean)
     image = apply_clarity_image(image, clarity_num, **kwargs)
-  #elif histeq_num < 0:
-  #  logger.info(f"Applying global HE enhancement")
-  #  kwargs = {}
-  #  copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
-  #  copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
-  #  image = apply_global_histeq_image(image, **kwargs)
   dehaze_params = parse_num_opts_expression(args.dehaze)
   dehaze_num = dehaze_params["num"]
   if dehaze_num != 0:
