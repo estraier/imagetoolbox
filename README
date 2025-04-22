@@ -238,15 +238,15 @@ The workflow of this command is the following.
   7: Brightness of the merged image is adjusted to the input average.
        use -nr or --no-restore to disable it.
   8: Optionally, various postprocessing methods are applied.
-       --histeq to apply histgram equalization
-       --dehaze to apply dehaze enhancement
+       --optimize-exposure to adjust exposure automatically
        --linear to modify brightness by a multiplicative function
        --gamma to modify brightness by a gamma function
        --slog to modify brightness by a scaled logarithmic function
        --sigmoid to adjust contrast by a scaled sigmoid function
        --saturation to adjust saturation by a multiplicative function
        --vibrance to adjust saturation by a scaled logarithmic function
-       --optimize-exposure to adjust exposure automatically
+       --histeq to apply histgram equalization
+       --dehaze to apply dehaze enhancement
        --denoise, --blur, --portrait, --texture, --unsharp, to adjust noise/bokeh/sharpness
        --trim, --pers, --scale to change geometry
        --vignetting, --caption to apply finishing touches

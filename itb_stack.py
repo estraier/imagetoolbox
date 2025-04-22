@@ -2476,118 +2476,6 @@ def apply_preset_image(image, name, meta, exposure_bracket):
   return np.clip(image, 0, 1)
 
 
-def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
-  """Applies global histogram equalization contrast enhancement."""
-  assert image.dtype == np.float32
-  assert gamma > 0
-  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-  l, a, b = cv2.split(lab)
-  l = np.clip(l, 0, 100)
-  a = np.clip(a, -128, 127)
-  b = np.clip(b, -128, 127)
-  l_255 = np.power(l / 100, 1 / gamma) * 255
-  l_bytes = l_255.astype(np.uint8)
-  float_ratio = np.where(l_bytes > 0, l_bytes / np.maximum(l_255, 1e-6), 1)
-  converted = cv2.equalizeHist(l_bytes).astype(np.float32)
-  restored_255 = converted / np.maximum(float_ratio, 0.5)
-  restored_255 = np.where(converted == 0, np.minimum(l_255 * 0.9, 0.9), restored_255)
-  restored = np.clip(np.power(restored_255 / 255, gamma) * 100, 0, 100)
-  lab = cv2.merge((restored, a, b))
-  enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-  if restore_color:
-    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    _, old_s, old_v = cv2.split(old_hsv)
-    new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
-    new_h, new_s, new_v = cv2.split(new_hsv)
-    highlight_risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
-    shadow_risk = np.clip((old_v - new_v) / (old_v + 1e-6), 0.1, 0.9)
-    risk = np.maximum(highlight_risk, shadow_risk)
-    merged_s = old_s * (1 - risk) + new_s * risk
-    final_hsv = cv2.merge((new_h, merged_s, new_v))
-    enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
-  return np.clip(enhanced_image, 0, 1)
-
-
-def apply_clahe_image(image, clip_limit, gamma=2.8, restore_color=True):
-  """Applies CLAHE contrast enhancement."""
-  assert image.dtype == np.float32
-  assert gamma > 0
-  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-  l, a, b = cv2.split(lab)
-  l = np.clip(l, 0, 100)
-  a = np.clip(a, -128, 127)
-  b = np.clip(b, -128, 127)
-  l_255 = np.power(l / 100, 1 / gamma) * 255
-  l_bytes = l_255.astype(np.uint8)
-  float_ratio = np.where(l_bytes > 0, l_bytes / np.maximum(l_255, 1e-6), 1)
-  tile_grid_size = (8, 8)
-  clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-  converted = clahe.apply(l_bytes).astype(np.float32)
-  restored_255 = converted / np.maximum(float_ratio, 0.5)
-  restored_255 = np.where(converted == 0, np.minimum(l_255 * 0.9, 0.9), restored_255)
-  restored = np.clip(np.power(restored_255 / 255, gamma) * 100, 0, 100)
-  lab = cv2.merge((restored, a, b))
-  enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-  if restore_color:
-    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    _, old_s, old_v = cv2.split(old_hsv)
-    new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
-    new_h, new_s, new_v = cv2.split(new_hsv)
-    risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
-    highlight_risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
-    shadow_risk = np.clip((old_v - new_v) / (old_v + 1e-6), 0.1, 0.9)
-    risk = np.maximum(highlight_risk, shadow_risk)
-    merged_s = old_s * (1 - risk) + new_s * risk
-    final_hsv = cv2.merge((new_h, merged_s, new_v))
-    enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
-  return np.clip(enhanced_image, 0, 1)
-
-
-def apply_dehaze_image(image, strength, restore_color=True):
-  """Applies dehaze enhancement."""
-  assert image.dtype == np.float32
-  assert 0.0 <= strength <= 1.0
-  h, w = image.shape[:2]
-  margin_h = int(h * 0.02)
-  margin_w = int(w * 0.02)
-  trimmed = image[margin_h:h - margin_h, margin_w:w - margin_w]
-  masked_trimmed = trimmed.reshape(-1, 3)
-  haze_values = np.min(masked_trimmed, axis=1)
-  num_pixels = max(1, int(len(haze_values) * 0.001))
-  haze_indices = np.argpartition(haze_values, -num_pixels)[-num_pixels:]
-  top_haze_pixels = masked_trimmed[haze_indices]
-  airlight_percentile = 100 - (0.5 + 5.0 * strength)
-  airlight_rgb = np.percentile(top_haze_pixels, airlight_percentile, axis=0)
-  airlight_rgb = airlight_rgb[np.newaxis, np.newaxis, :]
-  airlight = apply_rolloff(airlight_rgb, asymptotic=0.9)[0, 0]
-  haze_channel_full = np.min(image, axis=2)
-  omega = 0.95 * strength
-  transmission = 1.0 - omega * haze_channel_full / (np.max(airlight) + 1e-6)
-  transmission = np.clip(transmission, 0.1, 1.0)[..., np.newaxis]
-  scene = (image - airlight) / np.maximum(transmission, 1e-6) + airlight
-  scene = np.clip(scene, 0, 1)
-  black_percentile = (0.4 + 4.0 * strength)
-  black = np.percentile(scene, black_percentile)
-  black += 0.02 * strength
-  strength_gamma = strength ** 0.5
-  adjusted = (scene - black * strength_gamma) / (1.0 - black * strength_gamma + 1e-6)
-  inverted = 1.0 - adjusted
-  rolled = apply_rolloff(inverted, asymptotic=0.5)
-  enhanced = 1.0 - rolled
-  if restore_color:
-    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    _, old_s, old_v = cv2.split(old_hsv)
-    new_hsv = cv2.cvtColor(enhanced, cv2.COLOR_BGR2HSV)
-    new_h, new_s, new_v = cv2.split(new_hsv)
-    highlight_risk = (new_v - old_v) / (1 - old_v + 1e-6)
-    shadow_risk = (old_v - new_v) / (old_v + 1e-6)
-    risk = np.clip(np.maximum(highlight_risk, shadow_risk), 0.1, 0.9)
-    merged_s = (1 - risk) * old_s + risk * new_s
-    final_hsv = cv2.merge((new_h, merged_s, new_v))
-    enhanced = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
-  return np.clip(enhanced, 0, 1)
-
-
 def apply_artistic_filter_image(image, name):
   """Applies an artistic filter."""
   assert image.dtype == np.float32
@@ -3144,6 +3032,129 @@ def saturate_image_scaled_log(image, factor):
   hsv = cv2.merge((h, s, v))
   mod_image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
   return np.clip(mod_image, 0, 1).astype(np.float32)
+
+
+def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
+  """Applies global histogram equalization contrast enhancement."""
+  assert image.dtype == np.float32
+  assert gamma > 0
+  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+  l, a, b = cv2.split(lab)
+  l = np.clip(l, 0, 100)
+  a = np.clip(a, -128, 127)
+  b = np.clip(b, -128, 127)
+  l_255 = np.power(l / 100, 1 / gamma) * 255
+  l_bytes = l_255.astype(np.uint8)
+  float_ratio = np.where(l_bytes > 0, l_bytes / np.maximum(l_255, 1e-6), 1)
+  converted = cv2.equalizeHist(l_bytes).astype(np.float32)
+  restored_255 = converted / np.maximum(float_ratio, 0.5)
+  restored_255 = np.where(converted == 0, np.minimum(l_255 * 0.9, 0.9), restored_255)
+  restored = np.clip(np.power(restored_255 / 255, gamma) * 100, 0, 100)
+  lab = cv2.merge((restored, a, b))
+  enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+  if restore_color:
+    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    _, old_s, old_v = cv2.split(old_hsv)
+    new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
+    new_h, new_s, new_v = cv2.split(new_hsv)
+    highlight_risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
+    shadow_risk = np.clip((old_v - new_v) / (old_v + 1e-6), 0.1, 0.9)
+    risk = np.maximum(highlight_risk, shadow_risk)
+    merged_s = old_s * (1 - risk) + new_s * risk
+    final_hsv = cv2.merge((new_h, merged_s, new_v))
+    enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+  return np.clip(enhanced_image, 0, 1)
+
+
+def apply_clahe_image(image, clip_limit, gamma=2.8, restore_color=True):
+  """Applies CLAHE contrast enhancement."""
+  assert image.dtype == np.float32
+  assert gamma > 0
+  lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+  l, a, b = cv2.split(lab)
+  l = np.clip(l, 0, 100)
+  a = np.clip(a, -128, 127)
+  b = np.clip(b, -128, 127)
+  l_255 = np.power(l / 100, 1 / gamma) * 255
+  l_bytes = l_255.astype(np.uint8)
+  float_ratio = np.where(l_bytes > 0, l_bytes / np.maximum(l_255, 1e-6), 1)
+  tile_grid_size = (8, 8)
+  clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+  converted = clahe.apply(l_bytes).astype(np.float32)
+  restored_255 = converted / np.maximum(float_ratio, 0.5)
+  restored_255 = np.where(converted == 0, np.minimum(l_255 * 0.9, 0.9), restored_255)
+  restored = np.clip(np.power(restored_255 / 255, gamma) * 100, 0, 100)
+  lab = cv2.merge((restored, a, b))
+  enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+  if restore_color:
+    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    _, old_s, old_v = cv2.split(old_hsv)
+    new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
+    new_h, new_s, new_v = cv2.split(new_hsv)
+    risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
+    highlight_risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
+    shadow_risk = np.clip((old_v - new_v) / (old_v + 1e-6), 0.1, 0.9)
+    risk = np.maximum(highlight_risk, shadow_risk)
+    merged_s = old_s * (1 - risk) + new_s * risk
+    final_hsv = cv2.merge((new_h, merged_s, new_v))
+    enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+  return np.clip(enhanced_image, 0, 1)
+
+
+def apply_dehaze_image(image, strength, restore_color=True):
+  """Applies dehaze enhancement."""
+  assert image.dtype == np.float32
+  assert -1.0 <= strength <= 1.0
+  h, w = image.shape[:2]
+  margin_h = int(h * 0.02)
+  margin_w = int(w * 0.02)
+  trimmed = image[margin_h:h - margin_h, margin_w:w - margin_w]
+  masked_trimmed = trimmed.reshape(-1, 3)
+  haze_values = np.min(masked_trimmed, axis=1)
+  num_pixels = max(1, int(len(haze_values) * 0.001))
+  haze_indices = np.argpartition(haze_values, -num_pixels)[-num_pixels:]
+  top_haze_pixels = masked_trimmed[haze_indices]
+  airlight_rgb = np.percentile(top_haze_pixels, 50, axis=0)
+  airlight_rgb = airlight_rgb[np.newaxis, np.newaxis, :]
+  airlight = apply_rolloff(airlight_rgb, asymptotic=0.9)[0, 0]
+  mean_rgb = np.mean(image, axis=(0, 1))
+  correction = mean_rgb / (airlight + 1e-6)
+  correction = np.clip(correction, 0.5, 2.0)
+  airlight = np.clip(airlight * correction, 0.0, 1.0)
+  haze_channel_full = np.min(image, axis=2)
+  omega = 0.95 * strength
+  transmission = 1.0 - omega * haze_channel_full / (np.max(airlight) + 1e-6)
+  transmission = np.clip(transmission, 0.1, 1.0)[..., np.newaxis]
+  if strength < 0:
+    alpha = (-strength) ** 2
+    base = 0.2 + 0.7 * alpha
+    haze_weight = base + (1.0 - base) * (1.0 - transmission[..., 0])
+    haze_weight *= alpha
+    haze_weight = haze_weight[..., np.newaxis]
+    blended = (1 - haze_weight) * image + haze_weight * airlight
+    return np.clip(blended, 0, 1)
+  scene = (image - airlight) / np.maximum(transmission, 1e-6) + airlight
+  scene = np.clip(scene, 0, 1)
+  black_percentile = 0.4 + 4.0 * strength
+  black = np.percentile(scene, black_percentile)
+  black += 0.02 * strength
+  strength_gamma = strength ** 0.5
+  adjusted = (scene - black * strength_gamma) / (1.0 - black * strength_gamma + 1e-6)
+  inverted = 1.0 - adjusted
+  rolled = apply_rolloff(inverted, asymptotic=0.5)
+  enhanced = 1.0 - rolled
+  if restore_color:
+    old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    _, old_s, old_v = cv2.split(old_hsv)
+    new_hsv = cv2.cvtColor(enhanced, cv2.COLOR_BGR2HSV)
+    new_h, new_s, new_v = cv2.split(new_hsv)
+    highlight_risk = (new_v - old_v) / (1 - old_v + 1e-6)
+    shadow_risk = (old_v - new_v) / (old_v + 1e-6)
+    risk = np.clip(np.maximum(highlight_risk, shadow_risk), 0.1, 0.9)
+    merged_s = (1 - risk) * old_s + risk * new_s
+    final_hsv = cv2.merge((new_h, merged_s, new_v))
+    enhanced = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+  return np.clip(enhanced, 0, 1)
 
 
 def center_rect(rect, center, area_ratio):
@@ -3989,10 +4000,6 @@ def make_ap_args():
                   help="fill black marin with the color of nearest pixels")
   ap.add_argument("--preset", default="", metavar="name",
                   help="apply a preset: light, dark, lift, drop, soft, hard, muted, vivid")
-  ap.add_argument("--histeq", default="0", metavar="num",
-                  help="apply histogram equalization by the clip limit. negative means global")
-  ap.add_argument("--dehaze", default="0", metavar="num",
-                  help="apply dehaze enhancement by the strength. 1 means full amount")
   ap.add_argument("--art", default="", metavar="name",
                   help="apply an artistic filter: pencil, stylized, cartoon")
   ap.add_argument("--optimize-exposure", "-ox", default="0", metavar="num",
@@ -4017,6 +4024,11 @@ def make_ap_args():
   ap.add_argument("--vibrance", type=float, default=0, metavar="num",
                   help="saturate colors by scaled log."
                   " positive to lighten, negative to darken")
+  ap.add_argument("--histeq", default="0", metavar="num",
+                  help="apply histogram equalization by the clip limit. negative means global")
+  ap.add_argument("--dehaze", default="0", metavar="num",
+                  help="apply dehaze enhancement by the strength. 1 means full amount."
+                  " -1 means total haze")
   ap.add_argument("--gray", default="", metavar="name",
                   help="convert to grayscale: bt601, bt709, bt2020,"
                   " red, orange, yellow, green, blue, mean, lab, ycbcr, hsv, laplacian, sobel,"
@@ -4477,28 +4489,7 @@ def edit_image(image, meta, args):
   if args.fill_margin:
     logger.info(f"Filling the margin")
     image = fill_black_margin_image(image)
-  histeq_params = parse_num_opts_expression(args.histeq)
-  histeq_num = histeq_params["num"]
-  if histeq_num > 0:
-    logger.info(f"Applying CLAHE enhancement")
-    kwargs = {}
-    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
-    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
-    image = apply_clahe_image(image, histeq_num, **kwargs)
-  elif histeq_num < 0:
-    logger.info(f"Applying global HE enhancement")
-    kwargs = {}
-    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
-    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
-    image = apply_global_histeq_image(image, **kwargs)
-  dehaze_params = parse_num_opts_expression(args.dehaze)
-  dehaze_num = dehaze_params["num"]
-  if dehaze_num > 0:
-    logger.info(f"Applying dehaze enhancement")
-    kwargs = {}
-    copy_param_to_kwargs(dehaze_params, kwargs, "restore_color", parse_boolean)
-    image = apply_dehaze_image(image, dehaze_num, **kwargs)
-  if args.art and args.gray != "none":
+  if args.art and args.art != "none":
     logger.info(f"Applying an artistic filter")
     image = apply_artistic_filter_image(image, args.art)
   optex_params = parse_num_opts_expression(args.optimize_exposure)
@@ -4532,6 +4523,27 @@ def edit_image(image, meta, args):
   if args.vibrance != 0:
     logger.info(f"Saturating colors by a scaled log")
     image = saturate_image_scaled_log(image, args.vibrance)
+  histeq_params = parse_num_opts_expression(args.histeq)
+  histeq_num = histeq_params["num"]
+  if histeq_num > 0:
+    logger.info(f"Applying CLAHE enhancement")
+    kwargs = {}
+    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
+    image = apply_clahe_image(image, histeq_num, **kwargs)
+  elif histeq_num < 0:
+    logger.info(f"Applying global HE enhancement")
+    kwargs = {}
+    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
+    image = apply_global_histeq_image(image, **kwargs)
+  dehaze_params = parse_num_opts_expression(args.dehaze)
+  dehaze_num = dehaze_params["num"]
+  if dehaze_num != 0:
+    logger.info(f"Applying dehaze enhancement")
+    kwargs = {}
+    copy_param_to_kwargs(dehaze_params, kwargs, "restore_color", parse_boolean)
+    image = apply_dehaze_image(image, dehaze_num, **kwargs)
   if args.gray and args.gray != "none":
     logger.info(f"Converting to grayscale")
     image = convert_grayscale_image(image, args.gray)

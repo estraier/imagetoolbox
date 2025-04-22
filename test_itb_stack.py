@@ -30,12 +30,13 @@ from itb_stack import (
   merge_images_focus_stacking, merge_images_grid, merge_images_stitch,
   tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
   fill_black_margin_image, apply_preset_image,
-  apply_global_histeq_image, apply_clahe_image, apply_dehaze_image,
+  optimize_exposure_image,
   apply_artistic_filter_image, stretch_contrast_image,
   adjust_level_image, apply_linear_image,
   apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   saturate_image_linear, saturate_image_scaled_log,
-  optimize_exposure_image, convert_grayscale_image,
+  apply_global_histeq_image, apply_clahe_image, apply_dehaze_image,
+  convert_grayscale_image,
   bilateral_denoise_image, masked_denoise_image,
   blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
   blur_image_pyramid, enhance_texture_image, unsharp_image_gaussian,
@@ -379,19 +380,14 @@ class TestItbStack(unittest.TestCase):
     processed = fill_black_margin_image(image)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_apply_global_histeq_image(self):
+  def test_optimize_exposure_face_gamma(self):
     image = generate_test_image()
-    processed = apply_global_histeq_image(image)
+    processed = optimize_exposure_image(image, 0.5, mask="face", gamma_scale=3.2)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_apply_clahe_image(self):
+  def test_optimize_exposure_oval_log(self):
     image = generate_test_image()
-    processed = apply_clahe_image(image, 2)
-    self.assertEqual(processed.shape, image.shape)
-
-  def test_apply_dehaze_image(self):
-    image = generate_test_image()
-    processed = apply_dehaze_image(image, 0.5)
+    processed = optimize_exposure_image(image, 0.5, mask="oval", log_scale=29)
     self.assertEqual(processed.shape, image.shape)
 
   def test_artistic_filter(self):
@@ -480,14 +476,24 @@ class TestItbStack(unittest.TestCase):
     processed = saturate_image_scaled_log(image, -3)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_optimize_exposure_face_gamma(self):
+  def test_apply_global_histeq_image(self):
     image = generate_test_image()
-    processed = optimize_exposure_image(image, 0.5, mask="face", gamma_scale=3.2)
+    processed = apply_global_histeq_image(image)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_optimize_exposure_oval_log(self):
+  def test_apply_clahe_image(self):
     image = generate_test_image()
-    processed = optimize_exposure_image(image, 0.5, mask="oval", log_scale=29)
+    processed = apply_clahe_image(image, 2)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_dehaze_image_positive(self):
+    image = generate_test_image()
+    processed = apply_dehaze_image(image, 0.5)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_dehaze_image_negative(self):
+    image = generate_test_image()
+    processed = apply_dehaze_image(image, -0.5)
     self.assertEqual(processed.shape, image.shape)
 
   def test_convert_grayscale_image(self):
@@ -658,6 +664,15 @@ class TestItbStack(unittest.TestCase):
     output_path = os.path.join(self.temp_path, "output.tif")
     sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
                    "--merge", "grid:columns=2:margin=2:background=#282"]
+    main()
+    self.assertTrue(os.path.exists(output_path))
+
+  @patch.object(sys, "argv", [])
+  def test_run_command_enhancement(self):
+    output_path = os.path.join(self.temp_path, "output.tif")
+    sys.argv[:] = ["itb_stack.py", "[colorbar]", "[colorbar]", "--output", output_path,
+                   "--level", "auto", "--linear", "0.8", "--gamma", "1.1", "--slog", "0.5",
+                   "--sigmoid", "0.5:mid=0.3"]
     main()
     self.assertTrue(os.path.exists(output_path))
 
