@@ -104,12 +104,12 @@ the black point.
 You can adjust contrast of the merged image automatically using contrast adaptive histogram
 equalization.  Set the strength between 0 and 1.
 
-  $ itb_stack.py input*.jpg -o output.jpg --clarity 0.4
+  $ itb_stack.py input*.jpg -o output.jpg --clarity 0.3
 
 The dehaze control enhances visibility and contrast in hazy or foggy images by removing
 atmospheric veils while preserving natural colors.  Set the strength between 0 and 1.
 
-  $ itb_stack.py input*.jpg -o output.jpg --dehaze 0.4
+  $ itb_stack.py input*.jpg -o output.jpg --dehaze 0.3
 
 Merging multiple pictures taken with high sensitivity is effective in suppressing noise.  Whereas
 median composition is widely used, the "denoise" mode provides better results in most cases.

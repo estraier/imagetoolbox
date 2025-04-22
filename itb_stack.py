@@ -327,10 +327,6 @@ def load_image_raw(file_path, meta=None):
   """Loads a raw image and returns its linear RGB data as a NumPy array."""
   import rawpy
   logger.debug(f"loading raw image: {file_path}")
-  try:
-    highlight_mode = rawpy.HighlightMode.ReconstructDefault
-  except:
-    highlight_mode = rawpy.HighlightMode.Blend
   with rawpy.imread(file_path) as raw:
     icc_name = "srgb"
     rgb = raw.postprocess(
@@ -338,7 +334,7 @@ def load_image_raw(file_path, meta=None):
       output_bps=16,
       no_auto_bright=True,
       use_camera_wb=True,
-      highlight_mode=highlight_mode,
+      highlight_mode=rawpy.HighlightMode.Blend,
       gamma=None,
       user_flip=0,
       fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Off,
@@ -3088,11 +3084,12 @@ def apply_clarity_image(image, strength, gamma=2.8, restore_color=True):
   if strength < 0:
     mean_l = np.mean(l)
     delta = restored - mean_l
-    restored = mean_l + delta / (1 + abs(strength))
-    restored = np.clip(restored, 0, 100)
-    flatten_factor = np.std(restored) / (np.std(l) + 1e-6)
+    change = np.abs(restored - l)
+    flatten_weight = 1.0 / (1.0 + abs(strength) * change)
+    restored = np.clip(mean_l + delta * flatten_weight, 0, 100)
     mean_a = np.mean(a)
     mean_b = np.mean(b)
+    flatten_factor = np.std(restored) / (np.std(l) + 1e-6)
     a = mean_a + (a - mean_a) * flatten_factor
     b = mean_b + (b - mean_b) * flatten_factor
   lab = cv2.merge((restored, a, b))
