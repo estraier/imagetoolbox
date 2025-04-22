@@ -35,7 +35,7 @@ from itb_stack import (
   adjust_level_image, apply_linear_image,
   apply_gamma_image, apply_scaled_log_image, apply_sigmoid_image,
   saturate_image_linear, saturate_image_scaled_log,
-  apply_global_histeq_image, apply_clahe_image, apply_dehaze_image,
+  apply_global_histeq_image, apply_clarity_image, apply_dehaze_image,
   convert_grayscale_image,
   bilateral_denoise_image, masked_denoise_image,
   blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
@@ -481,9 +481,14 @@ class TestItbStack(unittest.TestCase):
     processed = apply_global_histeq_image(image)
     self.assertEqual(processed.shape, image.shape)
 
-  def test_apply_clahe_image(self):
+  def test_apply_clarity_image_positive(self):
     image = generate_test_image()
-    processed = apply_clahe_image(image, 2)
+    processed = apply_clarity_image(image, 2)
+    self.assertEqual(processed.shape, image.shape)
+
+  def test_apply_clarity_image_negative(self):
+    image = generate_test_image()
+    processed = apply_clarity_image(image, -2)
     self.assertEqual(processed.shape, image.shape)
 
   def test_apply_dehaze_image_positive(self):

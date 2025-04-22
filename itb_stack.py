@@ -3066,8 +3066,8 @@ def apply_global_histeq_image(image, gamma=2.8, restore_color=True):
   return np.clip(enhanced_image, 0, 1)
 
 
-def apply_clahe_image(image, clip_limit, gamma=2.8, restore_color=True):
-  """Applies CLAHE contrast enhancement."""
+def apply_clarity_image(image, strength, gamma=2.8, restore_color=True):
+  """Applies clarity enhancement."""
   assert image.dtype == np.float32
   assert gamma > 0
   lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -3079,14 +3079,25 @@ def apply_clahe_image(image, clip_limit, gamma=2.8, restore_color=True):
   l_bytes = l_255.astype(np.uint8)
   float_ratio = np.where(l_bytes > 0, l_bytes / np.maximum(l_255, 1e-6), 1)
   tile_grid_size = (8, 8)
+  clip_limit = abs(strength)
   clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
   converted = clahe.apply(l_bytes).astype(np.float32)
   restored_255 = converted / np.maximum(float_ratio, 0.5)
   restored_255 = np.where(converted == 0, np.minimum(l_255 * 0.9, 0.9), restored_255)
   restored = np.clip(np.power(restored_255 / 255, gamma) * 100, 0, 100)
+  if strength < 0:
+    mean_l = np.mean(l)
+    delta = restored - mean_l
+    restored = mean_l + delta / (1 + abs(strength))
+    restored = np.clip(restored, 0, 100)
+    flatten_factor = np.std(restored) / (np.std(l) + 1e-6)
+    mean_a = np.mean(a)
+    mean_b = np.mean(b)
+    a = mean_a + (a - mean_a) * flatten_factor
+    b = mean_b + (b - mean_b) * flatten_factor
   lab = cv2.merge((restored, a, b))
   enhanced_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-  if restore_color:
+  if restore_color and strength > 0:
     old_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     _, old_s, old_v = cv2.split(old_hsv)
     new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2HSV)
@@ -4024,8 +4035,8 @@ def make_ap_args():
   ap.add_argument("--vibrance", type=float, default=0, metavar="num",
                   help="saturate colors by scaled log."
                   " positive to lighten, negative to darken")
-  ap.add_argument("--histeq", default="0", metavar="num",
-                  help="apply histogram equalization by the clip limit. negative means global")
+  ap.add_argument("--clarity", default="0", metavar="num",
+                  help="apply histogram equalization by the clip limit. negative means softening")
   ap.add_argument("--dehaze", default="0", metavar="num",
                   help="apply dehaze enhancement by the strength. 1 means full amount."
                   " -1 means total haze")
@@ -4523,20 +4534,20 @@ def edit_image(image, meta, args):
   if args.vibrance != 0:
     logger.info(f"Saturating colors by a scaled log")
     image = saturate_image_scaled_log(image, args.vibrance)
-  histeq_params = parse_num_opts_expression(args.histeq)
-  histeq_num = histeq_params["num"]
-  if histeq_num > 0:
-    logger.info(f"Applying CLAHE enhancement")
+  clarity_params = parse_num_opts_expression(args.clarity)
+  clarity_num = clarity_params["num"]
+  if clarity_num != 0:
+    logger.info(f"Applying clarity enhancement")
     kwargs = {}
-    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
-    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
-    image = apply_clahe_image(image, histeq_num, **kwargs)
-  elif histeq_num < 0:
-    logger.info(f"Applying global HE enhancement")
-    kwargs = {}
-    copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
-    copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
-    image = apply_global_histeq_image(image, **kwargs)
+    copy_param_to_kwargs(clarity_params, kwargs, "gamma", float)
+    copy_param_to_kwargs(clarity_params, kwargs, "restore_color", parse_boolean)
+    image = apply_clarity_image(image, clarity_num, **kwargs)
+  #elif histeq_num < 0:
+  #  logger.info(f"Applying global HE enhancement")
+  #  kwargs = {}
+  #  copy_param_to_kwargs(histeq_params, kwargs, "gamma", float)
+  #  copy_param_to_kwargs(histeq_params, kwargs, "restore_color", parse_boolean)
+  #  image = apply_global_histeq_image(image, **kwargs)
   dehaze_params = parse_num_opts_expression(args.dehaze)
   dehaze_num = dehaze_params["num"]
   if dehaze_num != 0:
@@ -4588,7 +4599,7 @@ def edit_image(image, meta, args):
     kwargs = {}
     copy_param_to_kwargs(texture_params, kwargs, "gamma", float)
     copy_param_to_kwargs(texture_params, kwargs, "smooth_mask_weight", float)
-    logger.info(f"Enhancing texture")
+    logger.info(f"Applying texture enhancement")
     image = enhance_texture_image(image, texture_num, **kwargs)
   unsharp_params = parse_num_opts_expression(args.unsharp)
   unsharp_num = unsharp_params["num"]
