@@ -3545,7 +3545,7 @@ def blur_image_portrait(image, max_level, decay=0.0, contrast=1.0, edge_threshol
   return np.clip(restored, 0, 1)
 
 
-def enhance_texture_image(image, radius, gamma=2.0, smooth_mask_weight=0.9):
+def enhance_texture_image(image, radius, gamma=2.0, smooth_mask_weight=0.8):
   """Enhances texture by detailed enhancing."""
   assert image.dtype == np.float32
   assert radius > 0
@@ -3564,10 +3564,9 @@ def enhance_texture_image(image, radius, gamma=2.0, smooth_mask_weight=0.9):
   if new_high > old_high and new_high > 0.7:
     restored *= old_high / new_high
   if smooth_mask_weight > 0:
-    sharpness = compute_sharpness_naive(image, high_low_balance=0.1)
-    mask_amount = ((2 / max(radius + 1, 2)) ** 0.75) * smooth_mask_weight
-    mask = np.clip(sharpness * mask_amount, 0, 1)[..., np.newaxis]
-    restored = mask * restored + (1 - mask) * image
+    sharpness = compute_sharpness_naive(image)
+    mask = np.clip(1.0 - sharpness, 0, 1)[..., np.newaxis]
+    restored = (1 - smooth_mask_weight * mask) * restored + (smooth_mask_weight * mask) * image
   return np.clip(restored, 0, 1)
 
 
@@ -3589,15 +3588,14 @@ def unsharp_image_gaussian(image, radius, gamma=1.4, smooth_mask_weight=0.5):
   diff_image = gamma_image - blur_image
   mask = np.abs(diff_image) > threshold
   diff_image *= amount * mask.astype(np.float32)
-  sharp_image = gamma_image + diff_image
-  sharp_image = np.clip(sharp_image, 0, 1)
-  sharp_image = np.power(sharp_image, gamma)
+  converted = gamma_image + diff_image
+  converted = np.clip(converted, 0, 1)
+  converted = np.power(converted, gamma)
   if smooth_mask_weight > 0:
-    sharpness = compute_sharpness_naive(image, high_low_balance=0.1)
-    mask_amount = ((2 / max(radius + 1, 2)) ** 0.75) * smooth_mask_weight
-    mask = np.clip(sharpness * mask_amount, 0, 1)[..., np.newaxis]
-    sharp_image = mask * sharp_image + (1 - mask) * image
-  return np.clip(sharp_image, 0, 1)
+    sharpness = compute_sharpness_naive(image)
+    mask = np.clip(1.0 - sharpness, 0, 1)[..., np.newaxis]
+    converted = (1 - smooth_mask_weight * mask) * converted + (smooth_mask_weight * mask) * image
+  return np.clip(converted, 0, 1)
 
 
 def trim_image(image, top, right, bottom, left):
