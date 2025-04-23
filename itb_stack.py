@@ -3125,9 +3125,7 @@ def apply_dehaze_image(image, strength, restore_color=True):
   num_pixels = max(1, int(len(haze_values) * 0.001))
   haze_indices = np.argpartition(haze_values, -num_pixels)[-num_pixels:]
   top_haze_pixels = masked_trimmed[haze_indices]
-  airlight_rgb = np.percentile(top_haze_pixels, 50, axis=0)
-  airlight_rgb = airlight_rgb[np.newaxis, np.newaxis, :]
-  airlight = apply_rolloff(airlight_rgb, asymptotic=0.9)[0, 0]
+  airlight = np.median(top_haze_pixels, axis=0)
   mean_rgb = np.mean(image, axis=(0, 1))
   correction = mean_rgb / (airlight + 1e-6)
   correction = np.clip(correction, 0.5, 2.0)
