@@ -2307,6 +2307,29 @@ def tone_map_image_mantiuk(image):
   return ldr
 
 
+def tone_map_image_durand(image, contrast=1.0, sigma_color=0.4, sigma_space=10):
+  """Durand tone mapping using YCbCr color space, with chroma rescaling."""
+  assert image.dtype == np.float32
+  ycbcr = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+  y = ycbcr[:, :, 0]
+  cb = ycbcr[:, :, 1]
+  cr = ycbcr[:, :, 2]
+  log_y = np.log1p(y)
+  base = cv2.bilateralFilter(log_y, d=0, sigmaColor=sigma_color, sigmaSpace=sigma_space)
+  detail = log_y - base
+  base_compressed = base / (np.max(base) + 1e-6) * np.float32(np.log1p(contrast))
+  log_y_new = base_compressed + detail
+  y_new = np.expm1(log_y_new)
+  y_new = np.clip(y_new, 0, 1.0)
+  y_shaped = inverse_sigmoidal_contrast_image(y_new, 5, 0.5)
+  scale = y_new / np.clip(y * (2.0 - y_shaped), 1e-6, None)
+  cb_new = (cb - np.float32(0.5)) * scale + np.float32(0.5)
+  cr_new = (cr - np.float32(0.5)) * scale + np.float32(0.5)
+  ycbcr_new = np.stack([y_new, cb_new, cr_new], axis=-1)
+  result = cv2.cvtColor(ycbcr_new, cv2.COLOR_YCrCb2BGR)
+  return np.clip(result, 0, 1)
+
+
 def fill_black_margin_image(image):
   """Fills black margin on the sides with neighbor colors."""
   assert image.dtype == np.float32
@@ -4006,7 +4029,7 @@ def make_ap_args():
                   " debevec, robertson, mertens, focus, grid, stitch")
   ap.add_argument("--tonemap", "-t", default="linear", metavar="name",
                   help="choose a tone mapping method for debevec:"
-                  " linear (default), reinhard, drago, mantiuk")
+                  " linear (default), reinhard, drago, mantiuk, durand")
   ap.add_argument("--no-restore", "-nr", action='store_true',
                   help="do not apply auto restoration of brightness")
   ap.add_argument("--fill-margin", "-fm", action='store_true',
@@ -4337,6 +4360,8 @@ def crop_to_match(image, target_size):
 def log_image_stats(image, prefix):
   """prints logs of an image."""
   assert image.dtype == np.float32
+  nan_count = np.isnan(image).sum()
+  inf_count = np.isposinf(image).sum() + np.isneginf(image).sum()
   has_nan = np.isnan(image).any()
   if has_nan:
     image = fix_overflown_image(image)
@@ -4349,7 +4374,7 @@ def log_image_stats(image, prefix):
   p99 = np.percentile(image, 99)
   logger.debug(f"{prefix} stats: min={minv:.3f}, max={maxv:.3f}, mean={mean:.3f},"
                f" stddev={stddev:.3f}, skew={skew:.3f}, kurt={kurt:.3f},"
-               f" p99={p99:.3f}, nan={has_nan}")
+               f" p99={p99:.3f}, nan={nan_count}, inf={inf_count}")
 
 
 def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brightness):
@@ -4441,6 +4466,9 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
     elif args.tonemap in ["mantiuk", "m"]:
       logger.info(f"Tone mapping images by Mantiuk's method")
       merged_image = tone_map_image_mantiuk(merged_image)
+    elif args.tonemap in ["durand", "u"]:
+      logger.info(f"Tone mapping images by Durand's method")
+      merged_image = tone_map_image_durand(merged_image)
     else:
       raise ValueError(f"Unknown tone method: {args.tonemap}")
     if logger.isEnabledFor(logging.DEBUG):

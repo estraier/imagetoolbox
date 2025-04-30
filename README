@@ -273,6 +273,7 @@ are supported.
   - reinhard (r) : Reinhard's method, based on human recognition model
   - drago (d) : Drago's method, based on logarithmic model
   - mantiuk (m) : Mantiuk's method, maximizing local contrast to enhance detail
+  - durand (u) : Durand's method, compressing contrast via edge-preserving filtering
 
 The following aligning methods are supported.
 
