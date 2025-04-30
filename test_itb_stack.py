@@ -28,7 +28,8 @@ from itb_stack import (
   merge_images_weighted_average,
   merge_images_debevec, merge_images_robertson, merge_images_mertens,
   merge_images_focus_stacking, merge_images_grid, merge_images_stitch,
-  tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago, tone_map_image_mantiuk,
+  tone_map_image_linear, tone_map_image_reinhard, tone_map_image_drago,
+  tone_map_image_mantiuk, tone_map_image_durand,
   fill_black_margin_image, apply_preset_image,
   optimize_exposure_image,
   apply_artistic_filter_image, stretch_contrast_image,
@@ -40,7 +41,8 @@ from itb_stack import (
   bilateral_denoise_image, masked_denoise_image,
   blur_image_gaussian, pyramid_down_naive, pyramid_up_naive,
   blur_image_pyramid, enhance_texture_image, unsharp_image_gaussian,
-  perspective_correct_image, trim_image, scale_image, apply_vignetting_image, write_caption,
+  perspective_correct_image, trim_image, scale_image, change_aspect_image,
+  apply_vignetting_image, write_caption,
 )
 
 
@@ -368,6 +370,11 @@ class TestItbStack(unittest.TestCase):
     processed = tone_map_image_mantiuk(image)
     self.assertEqual(processed.shape, image.shape)
 
+  def test_tone_map_image_durand(self):
+    image = generate_test_image() * 2
+    processed = tone_map_image_durand(image)
+    self.assertEqual(processed.shape, image.shape)
+
   def test_apply_preset_image(self):
     image = generate_test_image()
     for name in ["raw-std", "light", "vivid"]:
@@ -566,6 +573,18 @@ class TestItbStack(unittest.TestCase):
     self.assertEqual(processed.shape[2], image.shape[2])
     processed = scale_image(image, 800, 800)
     self.assertEqual(processed.shape[2], image.shape[2])
+
+  def test_change_aspect_image_wide(self):
+    image = generate_test_image()
+    processed = change_aspect_image(image, 2, 1)
+    self.assertEqual(processed.shape[0], processed.shape[1] / 2)
+    self.assertEqual(processed.shape[1], image.shape[1])
+
+  def test_change_aspect_image_narrow(self):
+    image = generate_test_image()
+    processed = change_aspect_image(image, 1, 2)
+    self.assertEqual(processed.shape[1], processed.shape[0] / 2)
+    self.assertEqual(processed.shape[0], image.shape[0])
 
   def test_apply_vignetting_image(self):
     image = generate_test_image()

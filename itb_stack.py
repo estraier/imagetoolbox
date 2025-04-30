@@ -2307,7 +2307,7 @@ def tone_map_image_mantiuk(image):
   return ldr
 
 
-def tone_map_image_durand(image, contrast=1.0, sigma_color=0.4, sigma_space=10):
+def tone_map_image_durand(image):
   """Durand tone mapping using YCbCr color space, with chroma rescaling."""
   assert image.dtype == np.float32
   ycbcr = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
@@ -2315,9 +2315,9 @@ def tone_map_image_durand(image, contrast=1.0, sigma_color=0.4, sigma_space=10):
   cb = ycbcr[:, :, 1]
   cr = ycbcr[:, :, 2]
   log_y = np.log1p(y)
-  base = cv2.bilateralFilter(log_y, d=0, sigmaColor=sigma_color, sigmaSpace=sigma_space)
+  base = cv2.bilateralFilter(log_y, d=0, sigmaColor=0.1, sigmaSpace=4)
   detail = log_y - base
-  base_compressed = base / (np.max(base) + 1e-6) * np.float32(np.log1p(contrast))
+  base_compressed = base / (np.max(base) + 1e-6) * np.float32(np.log1p(1.0))
   log_y_new = base_compressed + detail
   y_new = np.expm1(log_y_new)
   y_new = np.clip(y_new, 0, 1.0)
@@ -3691,6 +3691,25 @@ def scale_image(image, width, height):
   return cv2.resize(image, (width, height), interpolation=interpolation)
 
 
+def change_aspect_image(image, width_ratio, height_ratio):
+  """Trims the image to match the aspect ratio."""
+  assert image.dtype == np.float32
+  assert width_ratio > 0
+  assert height_ratio > 0
+  h, w = image.shape[:2]
+  target_aspect = width_ratio / height_ratio
+  current_aspect = w / h
+  if current_aspect > target_aspect * 1.005:
+    new_w = int(round(h * target_aspect))
+    offset = (w - new_w) // 2
+    image = image[:, offset:offset + new_w]
+  elif current_aspect < target_aspect * 0.995:
+    new_h = int(round(w / target_aspect))
+    offset = (h - new_h) // 2
+    image = image[offset:offset + new_h, :]
+  return image
+
+
 def apply_vignetting_image(image, strength, cx=0.5, cy=0.5):
   """Apply radial vignetting to the image."""
   assert image.dtype == np.float32
@@ -3949,6 +3968,21 @@ def parse_scale_expression(expr):
   return w, h
 
 
+def parse_aspect_expression(expr):
+  """Parses aspect expression and returns WH ratios."""
+  expr = expr.strip()
+  if not expr:
+    return None
+  values = list(map(float, re.split(r'[ ,\|:;]+', expr.strip())))
+  if len(values) == 1:
+    w, h = values[0], 1
+  elif len(values) == 2:
+    w, h = values[0], values[1]
+  else:
+    raise ValueError("aspect expression must contain 1 to 2 values")
+  return w, h
+
+
 def convert_gamut_image(image, src_name, dst_name):
   """Converts color gamut of the image with ICC profiles."""
   assert image.dtype == np.float32
@@ -4088,6 +4122,8 @@ def make_ap_args():
                   " eg. 10,10,10,90,0,100,100,0")
   ap.add_argument("--scale", default="", metavar="numlist",
                   help="scale change: WIDTH,HEIGHT in pixels eg. 1920,1080")
+  ap.add_argument("--aspect", default="", metavar="numlist",
+                  help="aspect change: WIDTH:HEIGHT in pixels eg. 3:2")
   ap.add_argument("--vignetting", default="0", metavar="num",
                   help="apply vignetting by the light reduction ratio at the corners")
   ap.add_argument("--caption", default="", metavar="expr",
@@ -4101,6 +4137,8 @@ def make_ap_args():
                   help="output a video file with the FPS")
   ap.add_argument("--max-memory-usage", type=float, default=8, metavar="num",
                   help="maximum memory usage in GiB")
+  ap.add_argument("--remove", "-rm", action='store_true',
+                  help="remove input files")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   return ap.parse_args()
 
@@ -4659,6 +4697,10 @@ def edit_image(image, meta, args):
     if scale_params[1] is None:
       scale_params = get_scaled_image_size(image, scale_params[0])
     image = scale_image(image, *scale_params)
+  aspect_params = parse_aspect_expression(args.aspect)
+  if aspect_params:
+    logger.info(f"Changing aspect of the image")
+    image = change_aspect_image(image, *aspect_params)
   vignetting_params = parse_num_opts_expression(args.vignetting)
   vignetting_num = vignetting_params["num"]
   if vignetting_num != 0:

@@ -134,12 +134,13 @@ Stitching images as a panoramic image is also supported.  "-fm" fills the black 
   $ itb_stack.py input*.jpg -o output.jpg -m s -fm
 
 You can trim and scale the merged image.  For trimming, you set percentages for each edge like
-margin spec in CSS (top,right,bottom,left).  For scaling, you set both the width and height, or
-just the longer side of the new image.  Perspective correction by specifying four coordinate
-points is also supported.
+margin spec in CSS (top,right,bottom,left).  You can also set the aspect ratio.  For scaling,
+you set both the width and height, or just the longer side of the new image.  Perspective
+correction by specifying four coordinate points is also supported.
 
   $ itb_stack.py input*.jpg -o output.jpg --trim "30,20,30,20" --scale "1920,1080"
   $ itb_stack.py input*.jpg -o output.jpg --trim "30,20" --scale "1920"
+  $ itb_stack.py input*.jpg -o output.jpg --scale "1920" --aspect "16:9"
   $ itb_stack.py input*.jpg -o output.jpg --pers "10,10,90,10,100,100,0,100"
 
 You can put a caption on the merged image.  By default, the font size is 20% of sqrt(area); the
@@ -246,7 +247,7 @@ The workflow of this command is the following.
        --histeq, --clarity to apply clarity enhancement
        --dehaze to apply dehaze enhancement
        --denoise, --blur, --portrait, --texture, --unsharp, to adjust noise/bokeh/sharpness
-       --trim, --pers, --scale to change geometry
+       --trim, --pers, --scale, --aspect to change geometry
        --vignetting, --caption to apply finishing touches
   8: The merged image is saved as a file.
 
