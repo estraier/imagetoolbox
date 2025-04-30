@@ -454,6 +454,12 @@ def estimate_image_memory_size(image):
   return width * height * channels * depth
 
 
+def remove_input_files(args):
+  """Removes input files."""
+  for path in args.inputs:
+    os.remove(path)
+
+
 def parse_boolean(text):
   """Parse a boolean expression and get its boolean value."""
   value = text.strip().lower()
@@ -4138,7 +4144,7 @@ def make_ap_args():
   ap.add_argument("--max-memory-usage", type=float, default=8, metavar="num",
                   help="maximum memory usage in GiB")
   ap.add_argument("--remove", "-rm", action='store_true',
-                  help="remove input files")
+                  help="remove input files after processing")
   ap.add_argument("--debug", action='store_true', help="print debug messages")
   return ap.parse_args()
 
@@ -4221,6 +4227,9 @@ def main():
     postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brightness)
   else:
     raise ValueError(f"Unsupported file format: {ext}")
+  if args.remove:
+    logger.info(f"Removing input files")
+    remove_input_files(args)
   elapsed_time = time.time() - start_time
   logger.info(f"Process done: time={elapsed_time:.2f}s")
 
