@@ -63,7 +63,10 @@ cmd_env = os.environ
 cmd_env["PATH"] = cmd_env["PATH"] + ":/opt/homebrew/bin"
 cmd_env["PATH"] = cmd_env["PATH"] + ":/usr/local/bin"
 cmd_env["PATH"] = cmd_env["PATH"] + ":/Applications/Hugin/tools_mac"
-cv2.setLogLevel(0)
+if hasattr(cv2, "setLogLevel"):
+  cv2.setLogLevel(0)
+elif hasattr(cv2, "utils") and hasattr(cv2.utils, "logging"):
+  cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
 
 
 def has_command(name):
