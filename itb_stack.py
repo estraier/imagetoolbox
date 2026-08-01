@@ -39,9 +39,10 @@ from PIL import Image, ImageCms
 
 
 PROG_NAME = "itb_stack.py"
-PROG_VERSION = "0.0.2"
+PROG_VERSION = "0.0.3"
 CMD_EXIFTOOL = "exiftool"
 CMD_HUGIN_ALIGN = "align_image_stack"
+WEBP_QUALITY = 80
 EXTS_IMAGE = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".jp2"]
 EXTS_IMAGE_HEIF = [".heic", ".heif"]
 EXTS_IMAGE_RAW = [".cr2", ".cr3", ".nef", ".arw", ".dng", ".rw2", ".orf", ".raf", ".pef", ".sr2"]
@@ -50,7 +51,7 @@ EXTS_EXIFTOOL = [".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".jp2",
 EXTS_EXIFREAD = [".jpg", ".jpeg", ".tiff", ".tif"] + EXTS_IMAGE_RAW
 EXTS_EXIFTOOL_ICC_READ = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".jp2"]
 EXTS_EXIFTOOL_ICC_WRITE = EXTS_EXIFTOOL_ICC_READ[:]
-EXTS_PILLOW_ICC_READ = [".jpg", ".jpeg", ".png", ".tiff", ".tif"]
+EXTS_PILLOW_ICC_READ = [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"]
 EXTS_PILLOW_ICC_WRITE = [".jpg", ".jpeg"]
 EXTS_VIDEO = [".mp4", ".mov"]
 EXTS_NPZ = [".npz"]
@@ -185,14 +186,15 @@ def check_icc_profile_name(file_path, default="srgb", meta=None):
   """Checks the name of the ICC profile of the image."""
   ext = os.path.splitext(file_path)[1].lower()
   desc = ""
-  profile = None
   if ext in EXTS_PILLOW_ICC_READ:
     try:
       with Image.open(file_path) as img:
         icc_bytes = img.info.get("icc_profile", None)
-        if icc_bytes:
-          desc = ImageCms.getProfileDescription(profile)
-          profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
+      if icc_bytes:
+        profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
+        desc = ImageCms.getProfileDescription(profile)
+        if meta is not None:
+          meta["_icc_data_"] = icc_bytes
     except Exception:
       pass
   if not desc and meta:
@@ -201,62 +203,65 @@ def check_icc_profile_name(file_path, default="srgb", meta=None):
   name = default
   if "prophoto" in desc:
     name = "prophoto_rgb"
-    if profile:
-      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   if "bt 2020" in desc or "bt2020" in desc:
     name = "bt2020"
-    if profile:
-      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   elif "adobe" in desc:
     name = "adobe_rgb"
-    if profile:
-      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   elif "display p3" in desc or "displayp3" in desc:
     name = "display_p3"
-    if profile:
-      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   elif "srgb" in desc:
     name = "srgb"
-    if profile:
-      ICC_PROFILES[name].setdefault("icc_data", profile.tobytes())
   return name
 
 
-def attach_icc_profile(file_path, icc_name):
-  """Attaches the ICC profile to the image file."""
+def get_icc_profile_data(icc_name):
+  """Gets the ICC profile data for the named color gamut."""
   item = ICC_PROFILES.get(icc_name)
   if not item:
     logger.warning(f"no such ICC profile: {icc_name}")
-    return False
+    return None
   profile = item.get("icc_data")
+  if profile:
+    return profile
+  icc_path = find_icc_file(icc_name)
+  if not icc_path:
+    return None
+  profile = read_file(icc_path)
+  item["icc_data"] = profile
+  return profile
+
+
+def attach_icc_profile(file_path, icc_name, profile=None):
+  """Attaches the ICC profile to the image file."""
+  if profile is None:
+    profile = get_icc_profile_data(icc_name)
   if not profile:
-    icc_path = find_icc_file(icc_name)
-    if not icc_path:
-      logger.warning(f"missing ICC profile: {icc_name}")
-      return False
-    profile = read_file(icc_path)
-    item["icc_data"] = profile
+    logger.warning(f"missing ICC profile: {icc_name}")
+    return False
   ext = os.path.splitext(file_path)[1].lower()
+  if has_command(CMD_EXIFTOOL) and ext in EXTS_EXIFTOOL_ICC_WRITE:
+    logger.info(f"Saving ICC profile: {icc_name}")
+    icc_tmp_path = None
+    try:
+      with tempfile.NamedTemporaryFile(delete=False, suffix=".icc") as icc_tmp:
+        icc_tmp.write(profile)
+        icc_tmp_path = icc_tmp.name
+      cmd = [CMD_EXIFTOOL, f"-icc_profile<={icc_tmp_path}",
+             "-overwrite_original", file_path]
+      logger.debug(f"running: {' '.join(cmd)}")
+      subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      return True
+    except Exception:
+      pass
+    finally:
+      if icc_tmp_path and os.path.exists(icc_tmp_path):
+        os.remove(icc_tmp_path)
   if ext in EXTS_PILLOW_ICC_WRITE:
     try:
       logger.info(f"Saving ICC profile: {icc_name}")
       with Image.open(file_path) as img:
         img.save(file_path, icc_profile=profile)
-      return True
-    except Exception:
-      pass
-  if has_command(CMD_EXIFTOOL) and ext in EXTS_EXIFTOOL_ICC_WRITE:
-    logger.info(f"Saving ICC profile: {icc_name}")
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".icc") as icc_tmp:
-      icc_tmp.write(profile)
-      icc_tmp_path = icc_tmp.name
-    cmd = [CMD_EXIFTOOL, f"-icc_profile<={icc_tmp_path}",
-           "-overwrite_original", file_path]
-    logger.debug(f"running: {' '.join(cmd)}")
-    try:
-      subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-      os.remove(icc_tmp_path)
       return True
     except Exception:
       pass
@@ -276,8 +281,8 @@ def load_image(file_path, meta=None):
   return image, bits, icc_name
 
 
-def save_image(file_path, image, bits, icc_name):
-  """Saves an image after converting it from linear RGB to sRGB."""
+def save_image(file_path, image, bits, icc_name, icc_profile=None):
+  """Saves an image after converting it from linear RGB to the output gamut."""
   assert image.dtype == np.float32
   logger.debug(f"saving image: {file_path}")
   profile = ICC_PROFILES[icc_name]
@@ -299,9 +304,16 @@ def save_image(file_path, image, bits, icc_name):
       image = (np.clip(image, 0, 1) * ((1<<8) - 1)).astype(np.uint8)
   else:
     raise ValueError(f"Unsupported file format: {ext}")
-  success = cv2.imwrite(file_path, image)
-  if not success:
-    raise ValueError(f"Failed to save image: {file_path}")
+  if ext == ".webp":
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    save_opts = {"format": "WEBP", "quality": WEBP_QUALITY}
+    if icc_profile:
+      save_opts["icc_profile"] = icc_profile
+    Image.fromarray(rgb_image).save(file_path, **save_opts)
+  else:
+    success = cv2.imwrite(file_path, image)
+    if not success:
+      raise ValueError(f"Failed to save image: {file_path}")
 
 
 def load_images_heif(file_path, meta=None):
@@ -585,8 +597,10 @@ def copy_icc_profile(source_path, target_path):
     try:
       subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      return True
     except Exception:
       pass
+  return False
 
 
 def srgb_to_linear(image):
@@ -4531,6 +4545,8 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
   bits = bits_list[0]
   meta = meta_list[0]
   icc_name = icc_names[0]
+  icc_profile = meta.get("_icc_data_")
+  gamut_converted = False
   merged_image = edit_image(merged_image, meta, args)
   if args.gamut:
     norm_gamut = args.gamut.lower()
@@ -4550,11 +4566,19 @@ def postprocess_images(args, images, bits_list, icc_names, meta_list, mean_brigh
       logger.info(f"Converting color gamut from {icc_name} to {norm_gamut}")
       merged_image = convert_gamut_image(merged_image, icc_name, norm_gamut)
       icc_name = norm_gamut
+      icc_profile = None
+      gamut_converted = True
+  if icc_profile is None:
+    icc_profile = get_icc_profile_data(icc_name)
   logger.info(f"Saving the output file as an image")
   ext = os.path.splitext(args.output)[1].lower()
-  save_image(args.output, merged_image, bits, icc_name)
+  save_image(args.output, merged_image, bits, icc_name, icc_profile)
   copy_metadata(args.inputs[0], args.output, icc_name)
-  if not attach_icc_profile(args.output, icc_name):
+  if ext == ".webp" and not has_command(CMD_EXIFTOOL):
+    profile_attached = bool(icc_profile)
+  else:
+    profile_attached = attach_icc_profile(args.output, icc_name, icc_profile)
+  if not profile_attached and not gamut_converted:
     copy_icc_profile(args.inputs[0], args.output)
 
 
