@@ -847,10 +847,12 @@ def inverse_sigmoidal_contrast_image(image, gain, mid):
   return np.clip((naive_inverse_sigmoid(image, gain, mid) - min_val) / diff, 0, 1)
 
 
-def apply_sigmoid_image(image, gain, mid=0.5):
-  """Adjust image brightness by a sigmoid transformation."""
+def apply_sigmoid_image(image, gain, mid=0.5, gamma=2.4):
+  """Adjust image contrast by a sigmoid transformation in a gamma space."""
   assert image.dtype == np.float32
   assert 0 <= mid <= 1
+  assert gamma > 0
+  image = np.power(np.clip(image, 0, 1), np.float32(1.0 / gamma))
   if gain > 1e-6:
     min_val = naive_sigmoid(0.0, gain, mid)
     max_val = naive_sigmoid(1.0, gain, mid)
@@ -862,6 +864,7 @@ def apply_sigmoid_image(image, gain, mid=0.5):
     max_val = naive_inverse_sigmoid(1.0, gain, mid)
     diff = max_val - min_val
     image = (naive_inverse_sigmoid(image, gain, mid) - min_val) / diff
+  image = np.power(np.clip(image, 0, 1), np.float32(gamma))
   return np.clip(image, 0, 1)
 
 
@@ -4111,7 +4114,8 @@ def make_ap_args():
                   " positive to lighten, negative to darken")
   ap.add_argument("--sigmoid", default="0", metavar="num",
                   help="sigmoidal contrast adjustment."
-                  " positive to strengthen, negative to weaken")
+                  " positive to strengthen, negative to weaken."
+                  " options: mid=0.5,gamma=2.4")
   ap.add_argument("--saturation", type=float, default=1, metavar="num",
                   help="saturate colors by linear mutiplication."
                   " less than 1.0 to darken, less than 1.0 to lighten")
@@ -4636,6 +4640,7 @@ def edit_image(image, meta, args):
     logger.info(f"Adjust brightness by a sigmoid")
     kwargs = {}
     copy_param_to_kwargs(sigmoid_params, kwargs, "mid", float)
+    copy_param_to_kwargs(sigmoid_params, kwargs, "gamma", float)
     image = apply_sigmoid_image(image, sigmoid_num, **kwargs)
   if args.saturation != 1:
     logger.info(f"Saturating colors by a linear multiplier")
