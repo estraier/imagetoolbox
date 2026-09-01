@@ -1138,7 +1138,7 @@ def adjust_white_balance_image(image, expr="auto"):
     scale_b = mean_gray / max(mean_b, 1e-6)
   logger.debug(f"R={scale_r:.3f}, G={scale_g:.3f}, B={scale_b:.3f}")
   white_threshold = 0.98
-  weights = 1 - np.clip((gray - (1 - white_threshold)) / white_threshold, 0, 1)
+  weights = np.sqrt(1 - np.clip((gray - (1 - white_threshold)) / white_threshold, 0, 1))
   image[:, :, 0] = np.clip(image[:, :, 0] * (weights * scale_b + (1 - weights)), 0, 1)
   image[:, :, 1] = np.clip(image[:, :, 1] * (weights * scale_g + (1 - weights)), 0, 1)
   image[:, :, 2] = np.clip(image[:, :, 2] * (weights * scale_r + (1 - weights)), 0, 1)
