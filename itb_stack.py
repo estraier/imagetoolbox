@@ -488,10 +488,10 @@ def parse_boolean(text):
 def parse_numeric(text):
   """Parse a numeric expression and get its float value."""
   text = text.lower().strip()
-  match = re.fullmatch("(-?\d+\.?\d*) */ *(-?\d+\.?\d*)", text)
+  match = re.fullmatch(r"(-?\d+\.?\d*) */ *(-?\d+\.?\d*)", text)
   if match:
     return float(match.group(1)) / float(match.group(2))
-  match = re.fullmatch("(-?\d+\.?\d*)", text)
+  match = re.fullmatch(r"(-?\d+\.?\d*)", text)
   if match:
     return float(text)
   return float("nan")
@@ -520,7 +520,7 @@ def get_metadata(path):
       if name == "ExposureCompensation":
         meta["_xc_"] = parse_numeric(value)
       if name == "BitsPerSample":
-        match = re.search("^(\d+)", value)
+        match = re.search(r"^(\d+)", value)
         if match:
           value = match.group(1)
           meta["_depth_"] = int(value)
@@ -549,7 +549,7 @@ def get_metadata(path):
       if name == "EXIF ExposureCompensation":
         meta["_xc_"] = parse_numeric(value)
       if name == "EXIF BitsPerSample":
-        match = re.search("^(\d+)", value)
+        match = re.search(r"^(\d+)", value)
         if match:
           value = match.group(1)
           meta["_depth_"] = int(value)
