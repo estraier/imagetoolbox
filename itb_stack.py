@@ -3821,8 +3821,16 @@ def write_caption(image, capexpr):
   logger.debug(f"text={text}, scale={font_scale:.2f},"
                f" r={r:.2f}, g={g:.2f}, b={b:.2f},"
                f" x={tx}, y={ty}, w={tw}, h={th}")
-  cv2.putText(image, text, (tx, ty), font, font_scale, font_color,
+  # OpenCV 5 requires an 8-bit destination for anti-aliased text drawing.
+  # Keep the working image in float32 and draw only the caption mask in 8-bit,
+  # then alpha-composite the requested float color onto the original image.
+  text_mask = np.zeros((h, w), dtype=np.uint8)
+  cv2.putText(text_mask, text, (tx, ty), font, font_scale, 255,
               thickness, line_type)
+  alpha = text_mask.astype(np.float32) / 255.0
+  alpha = alpha[:, :, np.newaxis]
+  color = np.asarray(font_color, dtype=np.float32).reshape(1, 1, 3)
+  image = image * (1.0 - alpha) + color * alpha
   return image
 
 
